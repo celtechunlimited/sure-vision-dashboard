@@ -225,14 +225,30 @@ function BranchAssignCell({
   );
 }
 
-function employeeColumns(
-  branches: EmployeeBranchOption[],
+function BranchDisplayCell({ row }: { row: Row<EmployeeDirectoryRow> }) {
+  const v = row.original;
+  const label = v.branch_long_name ?? v.branch_short_name;
+  if (!label) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="max-w-[180px] truncate" title={label}>
+      {label}
+    </span>
+  );
+}
+
+function employeeColumns(config: {
+  branches: EmployeeBranchOption[];
+  variant: "admin" | "branch";
+  canEditRow: (row: EmployeeDirectoryRow) => boolean;
   handlers: {
     onEdit: (row: EmployeeDirectoryRow) => void;
     onDeactivate: (row: EmployeeDirectoryRow) => void;
     onActivate: (row: EmployeeDirectoryRow) => void;
-  },
-): ColumnDef<EmployeeDirectoryRow>[] {
+  };
+}): ColumnDef<EmployeeDirectoryRow>[] {
+  const { branches, variant, canEditRow, handlers } = config;
   return [
     {
       id: "name",
@@ -280,9 +296,12 @@ function employeeColumns(
       header: ({ column }) => (
         <EmployeeColumnHeader column={column} title="Branch" />
       ),
-      cell: ({ row }) => (
-        <BranchAssignCell row={row} branches={branches} />
-      ),
+      cell: ({ row }) =>
+        variant === "branch" ? (
+          <BranchDisplayCell row={row} />
+        ) : (
+          <BranchAssignCell row={row} branches={branches} />
+        ),
     },
     {
       accessorKey: "employee_created_at",
@@ -315,40 +334,50 @@ function employeeColumns(
       id: "actions",
       enableSorting: false,
       enableHiding: false,
-      cell: ({ row }) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              className="flex size-8 text-muted-foreground data-[state=open]:bg-muted"
-              size="icon"
-            >
-              <EllipsisVerticalIcon />
-              <span className="sr-only">Open menu</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
-            <DropdownMenuItem onSelect={() => handlers.onEdit(row.original)}>
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {row.original.is_active ? (
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => handlers.onDeactivate(row.original)}
+      cell: ({ row }) => {
+        const r = row.original;
+        if (!canEditRow(r)) {
+          return <span className="text-muted-foreground">—</span>;
+        }
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                className="flex size-8 text-muted-foreground data-[state=open]:bg-muted"
+                size="icon"
               >
-                Deactivate
+                <EllipsisVerticalIcon />
+                <span className="sr-only">Open menu</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onSelect={() => handlers.onEdit(r)}>
+                Edit
               </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem
-                onSelect={() => handlers.onActivate(row.original)}
-              >
-                Activate
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
+              {variant === "admin" ? (
+                <>
+                  <DropdownMenuSeparator />
+                  {r.is_active ? (
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => handlers.onDeactivate(r)}
+                    >
+                      Deactivate
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem
+                      onSelect={() => handlers.onActivate(r)}
+                    >
+                      Activate
+                    </DropdownMenuItem>
+                  )}
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
     },
   ];
 }
@@ -358,9 +387,17 @@ type BranchFilterValue = "all" | "unassigned" | string;
 export function DataTable({
   data: initialData,
   branches,
+  variant = "admin",
+  viewerUserId = null,
+  viewerIsManager = false,
+  viewerIsSuperAdmin = false,
 }: {
   data: EmployeeDirectoryRow[];
   branches: EmployeeBranchOption[];
+  variant?: "admin" | "branch";
+  viewerUserId?: string | null;
+  viewerIsManager?: boolean;
+  viewerIsSuperAdmin?: boolean;
 }) {
   const router = useRouter();
   const [data, setData] = React.useState(initialData);
@@ -376,6 +413,16 @@ export function DataTable({
   const [columnFilters, setColumnFilters] =
     React.useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = React.useState("");
+
+  const canEditRow = React.useCallback(
+    (row: EmployeeDirectoryRow) => {
+      if (variant === "admin") return true;
+      if (viewerIsSuperAdmin) return true;
+      if (viewerIsManager) return true;
+      return row.user_id === viewerUserId;
+    },
+    [variant, viewerIsSuperAdmin, viewerIsManager, viewerUserId],
+  );
 
   const [formOpen, setFormOpen] = React.useState(false);
   const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
@@ -435,12 +482,17 @@ export function DataTable({
 
   const columns = React.useMemo(
     () =>
-      employeeColumns(branches, {
-        onEdit: openEdit,
-        onDeactivate: openDeactivate,
-        onActivate: handleActivate,
+      employeeColumns({
+        branches,
+        variant,
+        canEditRow,
+        handlers: {
+          onEdit: openEdit,
+          onDeactivate: openDeactivate,
+          onActivate: handleActivate,
+        },
       }),
-    [branches, openEdit, openDeactivate, handleActivate],
+    [branches, variant, canEditRow, openEdit, openDeactivate, handleActivate],
   );
 
   const table = useReactTable({
@@ -476,7 +528,7 @@ export function DataTable({
     if (branchFilter === "all") return "All branches";
     if (branchFilter === "unassigned") return "Unassigned";
     const b = branches.find((x) => x.id === branchFilter);
-    return b?.short_name ?? "Branch";
+    return b?.long_name ?? "Branch";
   }, [branchFilter, branches]);
 
   return (
@@ -487,53 +539,58 @@ export function DataTable({
         mode={formMode}
         row={formMode === "edit" ? editingRow : null}
         branches={branches}
+        variant={variant}
+        viewerUserId={viewerUserId}
+        viewerIsManager={viewerIsManager}
       />
 
-      <AlertDialog
-        open={deactivateOpen}
-        onOpenChange={(next) => {
-          if (!deactivatePending) setDeactivateOpen(next);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Deactivate employee?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deactivateTarget
-                ? `“${formatEmployeeName(deactivateTarget)}” (${deactivateTarget.email}) will be marked inactive.`
-                : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deactivatePending}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deactivatePending || !deactivateTarget}
-              onClick={(e) => {
-                e.preventDefault();
-                if (!deactivateTarget) return;
-                startDeactivate(async () => {
-                  const result = await deactivateEmployeeUser(
-                    deactivateTarget.user_id,
-                  );
-                  if (!result.ok) {
-                    toast.error(result.message);
-                    return;
-                  }
-                  toast.success("Employee deactivated");
-                  setDeactivateOpen(false);
-                  setDeactivateTarget(null);
-                  router.refresh();
-                });
-              }}
-            >
-              {deactivatePending ? "Deactivating…" : "Deactivate"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {variant === "admin" ? (
+        <AlertDialog
+          open={deactivateOpen}
+          onOpenChange={(next) => {
+            if (!deactivatePending) setDeactivateOpen(next);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Deactivate employee?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {deactivateTarget
+                  ? `“${formatEmployeeName(deactivateTarget)}” (${deactivateTarget.email}) will be marked inactive.`
+                  : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deactivatePending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={deactivatePending || !deactivateTarget}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!deactivateTarget) return;
+                  startDeactivate(async () => {
+                    const result = await deactivateEmployeeUser(
+                      deactivateTarget.user_id,
+                    );
+                    if (!result.ok) {
+                      toast.error(result.message);
+                      return;
+                    }
+                    toast.success("Employee deactivated");
+                    setDeactivateOpen(false);
+                    setDeactivateTarget(null);
+                    router.refresh();
+                  });
+                }}
+              >
+                {deactivatePending ? "Deactivating…" : "Deactivate"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
 
       <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
         <Input
@@ -595,16 +652,18 @@ export function DataTable({
                   key={b.id}
                   onSelect={() => setBranchFilter(b.id)}
                 >
-                  {b.short_name}
+                  {b.long_name}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
-            <PlusIcon />
-            <span className="hidden lg:inline">Add employee</span>
-          </Button>
+          {variant === "admin" ? (
+            <Button variant="outline" size="sm" type="button" onClick={openCreate}>
+              <PlusIcon />
+              <span className="hidden lg:inline">Add employee</span>
+            </Button>
+          ) : null}
         </div>
       </div>
 

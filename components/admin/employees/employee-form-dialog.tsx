@@ -87,6 +87,9 @@ export type EmployeeFormDialogProps = {
   mode: "create" | "edit";
   row: EmployeeDirectoryRow | null;
   branches: EmployeeBranchOption[];
+  variant?: "admin" | "branch";
+  viewerUserId?: string | null;
+  viewerIsManager?: boolean;
 };
 
 export function EmployeeFormDialog({
@@ -95,6 +98,9 @@ export function EmployeeFormDialog({
   mode,
   row,
   branches,
+  variant = "admin",
+  viewerUserId = null,
+  viewerIsManager = false,
 }: EmployeeFormDialogProps) {
   const router = useRouter();
   const [createForm, setCreateForm] = React.useState<CreateFormState>(
@@ -124,6 +130,10 @@ export function EmployeeFormDialog({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (variant === "branch" && mode === "create") {
+      toast.error("Creating employees is not available here.");
+      return;
+    }
     if (mode === "edit") {
       if (!row) {
         toast.error("No employee selected");
@@ -197,7 +207,7 @@ export function EmployeeFormDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
-          {mode === "create" ? (
+          {variant === "admin" && mode === "create" ? (
               <>
                 <div className="grid gap-2">
                   <Label htmlFor="emp-email">Email</Label>
@@ -386,20 +396,31 @@ export function EmployeeFormDialog({
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="edit-role">Role</Label>
-                    <Select
-                      value={editForm.employee_role}
-                      onValueChange={(value: EmployeeRole) =>
-                        setEditForm((s) => ({ ...s, employee_role: value }))
-                      }
-                    >
-                      <SelectTrigger id="edit-role" size="default">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="manager">Manager</SelectItem>
-                        <SelectItem value="staff">Staff</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    {variant === "branch" &&
+                    row.user_id === viewerUserId &&
+                    !viewerIsManager ? (
+                      <Input
+                        id="edit-role"
+                        readOnly
+                        className="bg-muted capitalize"
+                        value={editForm.employee_role}
+                      />
+                    ) : (
+                      <Select
+                        value={editForm.employee_role}
+                        onValueChange={(value: EmployeeRole) =>
+                          setEditForm((s) => ({ ...s, employee_role: value }))
+                        }
+                      >
+                        <SelectTrigger id="edit-role" size="default">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="manager">Manager</SelectItem>
+                          <SelectItem value="staff">Staff</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                 </div>
               </>
@@ -414,7 +435,11 @@ export function EmployeeFormDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={pending || (mode === "edit" && !row)}>
-              {pending ? "Saving…" : "Save"}
+              {pending
+                ? "Saving…"
+                : mode === "create" && variant === "admin"
+                  ? "Create"
+                  : "Save"}
             </Button>
           </DialogFooter>
         </form>

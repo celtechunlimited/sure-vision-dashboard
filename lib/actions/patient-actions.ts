@@ -14,8 +14,7 @@ const isoDate = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a valid date");
 
-const updatePatientSchema = z.object({
-  patientId: z.string().uuid(),
+const patientFieldsSchema = z.object({
   first_name: z.string().trim().min(1, "First name is required"),
   middle_name: z.string().trim().nullable(),
   last_name: z.string().trim().min(1, "Last name is required"),
@@ -23,6 +22,75 @@ const updatePatientSchema = z.object({
   date_of_birth: z.union([isoDate, z.literal("")]).nullable(),
   address: z.string().trim().nullable(),
 });
+
+const updatePatientSchema = patientFieldsSchema.extend({
+  patientId: z.string().uuid(),
+});
+
+const createPatientSchema = patientFieldsSchema;
+
+function normalizePatientFields(
+  data: z.infer<typeof patientFieldsSchema>,
+): {
+  first_name: string;
+  middle_name: string | null;
+  last_name: string;
+  contact_number: string | null;
+  date_of_birth: string | null;
+  address: string | null;
+} {
+  const middle =
+    data.middle_name == null || data.middle_name === ""
+      ? null
+      : data.middle_name;
+  const contact =
+    data.contact_number == null || data.contact_number === ""
+      ? null
+      : data.contact_number;
+  const dob =
+    data.date_of_birth == null || data.date_of_birth === ""
+      ? null
+      : data.date_of_birth;
+  const addr =
+    data.address == null || data.address === "" ? null : data.address;
+  return {
+    first_name: data.first_name,
+    middle_name: middle,
+    last_name: data.last_name,
+    contact_number: contact,
+    date_of_birth: dob,
+    address: addr,
+  };
+}
+
+export async function createPatientRecord(
+  input: unknown,
+): Promise<PatientMutationResult> {
+  const parsed = createPatientSchema.safeParse(input);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => i.message).join("; ");
+    return { ok: false, message: msg || "Invalid form data" };
+  }
+
+  const fields = normalizePatientFields(parsed.data);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("patients")
+    .insert(fields)
+    .select("id");
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: error.message };
+  }
+  if (!data?.length) {
+    return { ok: false, message: "Patient was not created" };
+  }
+
+  revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
+  return { ok: true };
+}
 
 export async function updatePatientRecord(
   input: unknown,
@@ -33,34 +101,18 @@ export async function updatePatientRecord(
     return { ok: false, message: msg || "Invalid form data" };
   }
 
-  const middle =
-    parsed.data.middle_name == null || parsed.data.middle_name === ""
-      ? null
-      : parsed.data.middle_name;
-  const contact =
-    parsed.data.contact_number == null ||
-    parsed.data.contact_number === ""
-      ? null
-      : parsed.data.contact_number;
-  const dob =
-    parsed.data.date_of_birth == null || parsed.data.date_of_birth === ""
-      ? null
-      : parsed.data.date_of_birth;
-  const addr =
-    parsed.data.address == null || parsed.data.address === ""
-      ? null
-      : parsed.data.address;
+  const fields = normalizePatientFields(parsed.data);
 
   const supabase = await createClient();
   const { error } = await supabase
     .from("patients")
     .update({
-      first_name: parsed.data.first_name,
-      middle_name: middle,
-      last_name: parsed.data.last_name,
-      contact_number: contact,
-      date_of_birth: dob,
-      address: addr,
+      first_name: fields.first_name,
+      middle_name: fields.middle_name,
+      last_name: fields.last_name,
+      contact_number: fields.contact_number,
+      date_of_birth: fields.date_of_birth,
+      address: fields.address,
     })
     .eq("id", parsed.data.patientId);
 
@@ -70,6 +122,7 @@ export async function updatePatientRecord(
   }
 
   revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
   return { ok: true };
 }
 
@@ -100,6 +153,7 @@ export async function deactivatePatientUser(
   }
 
   revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
   return { ok: true };
 }
 
@@ -128,5 +182,6 @@ export async function activatePatientUser(
   }
 
   revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
   return { ok: true };
 }

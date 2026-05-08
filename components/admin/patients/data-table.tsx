@@ -30,6 +30,7 @@ import {
   Columns3Icon,
   EllipsisVerticalIcon,
   FilterIcon,
+  PlusIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -176,11 +177,14 @@ function PatientColumnHeader<TData, TValue>({
   );
 }
 
-function patientColumns(handlers: {
-  onEdit: (row: PatientDirectoryRow) => void;
-  onDeactivate: (row: PatientDirectoryRow) => void;
-  onReactivate: (row: PatientDirectoryRow) => void;
-}) {
+function patientColumns(
+  handlers: {
+    onEdit: (row: PatientDirectoryRow) => void;
+    onDeactivate: (row: PatientDirectoryRow) => void;
+    onReactivate: (row: PatientDirectoryRow) => void;
+  },
+  allowAccountMutations: boolean,
+) {
   const cols: ColumnDef<PatientDirectoryRow>[] = [
     {
       id: "name",
@@ -276,7 +280,7 @@ function patientColumns(handlers: {
               <DropdownMenuItem onSelect={() => handlers.onEdit(r)}>
                 Edit
               </DropdownMenuItem>
-              {hasAccount ? (
+              {allowAccountMutations && hasAccount ? (
                 <>
                   <DropdownMenuSeparator />
                   {r.account_status === "active" ? (
@@ -306,7 +310,14 @@ function patientColumns(handlers: {
 
 type AccountFilterValue = "all" | PatientAccountStatus;
 
-export function DataTable({ data: initialData }: { data: PatientDirectoryRow[] }) {
+export function DataTable({
+  data: initialData,
+  variant = "admin",
+}: {
+  data: PatientDirectoryRow[];
+  variant?: "admin" | "branch";
+}) {
+  const allowAccountMutations = variant === "admin";
   const router = useRouter();
   const [data, setData] = React.useState(initialData);
   const [columnVisibility, setColumnVisibility] =
@@ -323,10 +334,18 @@ export function DataTable({ data: initialData }: { data: PatientDirectoryRow[] }
   const [globalFilter, setGlobalFilter] = React.useState("");
 
   const [formOpen, setFormOpen] = React.useState(false);
+  const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
   const [editingRow, setEditingRow] =
     React.useState<PatientDirectoryRow | null>(null);
 
+  const openCreate = React.useCallback(() => {
+    setFormMode("create");
+    setEditingRow(null);
+    setFormOpen(true);
+  }, []);
+
   const openEdit = React.useCallback((row: PatientDirectoryRow) => {
+    setFormMode("edit");
     setEditingRow(row);
     setFormOpen(true);
   }, []);
@@ -370,12 +389,15 @@ export function DataTable({ data: initialData }: { data: PatientDirectoryRow[] }
 
   const columns = React.useMemo(
     () =>
-      patientColumns({
-        onEdit: openEdit,
-        onDeactivate: openDeactivate,
-        onReactivate: handleReactivate,
-      }),
-    [openEdit, openDeactivate, handleReactivate],
+      patientColumns(
+        {
+          onEdit: openEdit,
+          onDeactivate: openDeactivate,
+          onReactivate: handleReactivate,
+        },
+        allowAccountMutations,
+      ),
+    [openEdit, openDeactivate, handleReactivate, allowAccountMutations],
   );
 
   const table = useReactTable({
@@ -420,57 +442,60 @@ export function DataTable({ data: initialData }: { data: PatientDirectoryRow[] }
           setFormOpen(open);
           if (!open) setEditingRow(null);
         }}
-        row={editingRow}
+        mode={formMode}
+        row={formMode === "edit" ? editingRow : null}
       />
 
-      <AlertDialog
-        open={deactivateOpen}
-        onOpenChange={(next) => {
-          if (!deactivatePending) setDeactivateOpen(next);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Deactivate patient account?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deactivateTarget
-                ? `“${formatPatientName(deactivateTarget)}”${
-                    deactivateTarget.email
-                      ? ` (${deactivateTarget.email})`
-                      : ""
-                  } will be marked inactive. They can be reactivated later.`
-                : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deactivatePending}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deactivatePending || !deactivateTarget?.user_id}
-              onClick={(e) => {
-                e.preventDefault();
-                const uid = deactivateTarget?.user_id;
-                if (!uid) return;
-                startDeactivate(async () => {
-                  const result = await deactivatePatientUser(uid);
-                  if (!result.ok) {
-                    toast.error(result.message);
-                    return;
-                  }
-                  toast.success("Patient account deactivated");
-                  setDeactivateOpen(false);
-                  setDeactivateTarget(null);
-                  router.refresh();
-                });
-              }}
-            >
-              {deactivatePending ? "Deactivating…" : "Deactivate"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {allowAccountMutations ? (
+        <AlertDialog
+          open={deactivateOpen}
+          onOpenChange={(next) => {
+            if (!deactivatePending) setDeactivateOpen(next);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Deactivate patient account?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {deactivateTarget
+                  ? `“${formatPatientName(deactivateTarget)}”${
+                      deactivateTarget.email
+                        ? ` (${deactivateTarget.email})`
+                        : ""
+                    } will be marked inactive. They can be reactivated later.`
+                  : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deactivatePending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={deactivatePending || !deactivateTarget?.user_id}
+                onClick={(e) => {
+                  e.preventDefault();
+                  const uid = deactivateTarget?.user_id;
+                  if (!uid) return;
+                  startDeactivate(async () => {
+                    const result = await deactivatePatientUser(uid);
+                    if (!result.ok) {
+                      toast.error(result.message);
+                      return;
+                    }
+                    toast.success("Patient account deactivated");
+                    setDeactivateOpen(false);
+                    setDeactivateTarget(null);
+                    router.refresh();
+                  });
+                }}
+              >
+                {deactivatePending ? "Deactivating…" : "Deactivate"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
 
       <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
         <Input
@@ -537,6 +562,10 @@ export function DataTable({ data: initialData }: { data: PatientDirectoryRow[] }
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
+            <PlusIcon />
+            <span className="hidden lg:inline">Add patient</span>
+          </Button>
         </div>
       </div>
 

@@ -53,6 +53,7 @@ export async function assignEmployeeBranch(
   }
 
   revalidatePath("/admin/users/employees");
+  revalidatePath("/employees");
   return { ok: true };
 }
 
@@ -104,6 +105,7 @@ export async function createEmployeeUser(
   }
 
   revalidatePath("/admin/users/employees");
+  revalidatePath("/employees");
   return { ok: true };
 }
 
@@ -148,6 +150,7 @@ export async function updateEmployeeRecord(
   }
 
   revalidatePath("/admin/users/employees");
+  revalidatePath("/employees");
   return { ok: true };
 }
 
@@ -173,6 +176,7 @@ export async function deactivateEmployeeUser(
   }
 
   revalidatePath("/admin/users/employees");
+  revalidatePath("/employees");
   return { ok: true };
 }
 
@@ -196,5 +200,6 @@ export async function activateEmployeeUser(
   }
 
   revalidatePath("/admin/users/employees");
+  revalidatePath("/employees");
   return { ok: true };
 }

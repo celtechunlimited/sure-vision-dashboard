@@ -4,7 +4,10 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { updatePatientRecord } from "@/lib/actions/patient-actions";
+import {
+  createPatientRecord,
+  updatePatientRecord,
+} from "@/lib/actions/patient-actions";
 import type { PatientDirectoryRow } from "@/lib/patients/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +30,17 @@ type FormState = {
   address: string;
 };
 
+function emptyFormState(): FormState {
+  return {
+    first_name: "",
+    middle_name: "",
+    last_name: "",
+    contact_number: "",
+    date_of_birth: "",
+    address: "",
+  };
+}
+
 function rowToForm(row: PatientDirectoryRow): FormState {
   return {
     first_name: row.first_name?.trim() ?? "",
@@ -41,29 +55,28 @@ function rowToForm(row: PatientDirectoryRow): FormState {
 export type PatientFormDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mode: "create" | "edit";
   row: PatientDirectoryRow | null;
 };
 
 export function PatientFormDialog({
   open,
   onOpenChange,
+  mode,
   row,
 }: PatientFormDialogProps) {
   const router = useRouter();
-  const [form, setForm] = React.useState<FormState>({
-    first_name: "",
-    middle_name: "",
-    last_name: "",
-    contact_number: "",
-    date_of_birth: "",
-    address: "",
-  });
+  const [form, setForm] = React.useState<FormState>(emptyFormState);
   const [pending, startTransition] = React.useTransition();
 
   React.useEffect(() => {
-    if (!open || !row) return;
-    setForm(rowToForm(row));
-  }, [open, row]);
+    if (!open) return;
+    if (mode === "edit" && row) {
+      setForm(rowToForm(row));
+    } else {
+      setForm(emptyFormState());
+    }
+  }, [open, mode, row]);
 
   function handleCancel() {
     if (pending) return;
@@ -72,27 +85,39 @@ export function PatientFormDialog({
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!row) return;
+    const payload = {
+      first_name: form.first_name,
+      middle_name: form.middle_name.trim() === "" ? null : form.middle_name,
+      last_name: form.last_name,
+      contact_number:
+        form.contact_number.trim() === "" ? null : form.contact_number,
+      date_of_birth: form.date_of_birth.trim() === "" ? null : form.date_of_birth,
+      address: form.address.trim() === "" ? null : form.address,
+    };
+
     startTransition(async () => {
-      const res = await updatePatientRecord({
-        patientId: row.patient_id,
-        first_name: form.first_name,
-        middle_name: form.middle_name.trim() === "" ? null : form.middle_name,
-        last_name: form.last_name,
-        contact_number:
-          form.contact_number.trim() === "" ? null : form.contact_number,
-        date_of_birth: form.date_of_birth.trim() === "" ? null : form.date_of_birth,
-        address: form.address.trim() === "" ? null : form.address,
-      });
+      const res =
+        mode === "create"
+          ? await createPatientRecord(payload)
+          : row
+            ? await updatePatientRecord({ patientId: row.patient_id, ...payload })
+            : { ok: false as const, message: "No patient selected" };
+
       if (!res.ok) {
         toast.error(res.message);
         return;
       }
-      toast.success("Patient updated");
+      toast.success(mode === "create" ? "Patient created" : "Patient updated");
       onOpenChange(false);
       router.refresh();
     });
   }
+
+  const title = mode === "create" ? "Add patient" : "Edit patient";
+  const description =
+    mode === "create"
+      ? "Create a patient record. Fields match the patients table only; no user account is created."
+      : "Update patient profile details. Account email is shown for reference only.";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -107,14 +132,11 @@ export function PatientFormDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Edit patient</DialogTitle>
-          <DialogDescription>
-            Update patient profile details. Account email is shown for reference
-            only.
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
-          {row?.email ? (
+          {mode === "edit" && row?.email ? (
             <div className="grid gap-2">
               <Label>Account email</Label>
               <Input value={row.email} readOnly className="bg-muted" />
@@ -200,8 +222,11 @@ export function PatientFormDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending || !row}>
-              {pending ? "Saving…" : "Save"}
+            <Button
+              type="submit"
+              disabled={pending || (mode === "edit" && !row)}
+            >
+              {pending ? "Saving…" : mode === "create" ? "Create" : "Save"}
             </Button>
           </DialogFooter>
         </form>
