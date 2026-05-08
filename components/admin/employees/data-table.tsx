@@ -33,11 +33,26 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { assignEmployeeBranch } from "@/lib/actions/employee-actions";
+import {
+  activateEmployeeUser,
+  assignEmployeeBranch,
+  deactivateEmployeeUser,
+} from "@/lib/actions/employee-actions";
 import type {
   EmployeeBranchOption,
   EmployeeDirectoryRow,
 } from "@/lib/employees/types";
+import { EmployeeFormDialog } from "@/components/admin/employees/employee-form-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -177,6 +192,11 @@ function BranchAssignCell({
 
 function employeeColumns(
   branches: EmployeeBranchOption[],
+  handlers: {
+    onEdit: (row: EmployeeDirectoryRow) => void;
+    onDeactivate: (row: EmployeeDirectoryRow) => void;
+    onActivate: (row: EmployeeDirectoryRow) => void;
+  },
 ): ColumnDef<EmployeeDirectoryRow>[] {
   return [
     {
@@ -237,10 +257,30 @@ function employeeColumns(
       cell: ({ row }) => formatDate(row.original.employee_created_at),
     },
     {
+      accessorKey: "is_active",
+      header: ({ column }) => (
+        <EmployeeColumnHeader column={column} title="Status" />
+      ),
+      cell: ({ row }) => {
+        const active = row.original.is_active;
+        return (
+          <Badge variant="outline" className="gap-1.5 font-normal">
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                active ? "bg-emerald-500" : "bg-red-500",
+              )}
+            />
+            {active ? "Active" : "Inactive"}
+          </Badge>
+        );
+      },
+    },
+    {
       id: "actions",
       enableSorting: false,
       enableHiding: false,
-      cell: () => (
+      cell: ({ row }) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -252,8 +292,25 @@ function employeeColumns(
               <span className="sr-only">Open menu</span>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-32">
-            <DropdownMenuItem disabled>Edit</DropdownMenuItem>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem onSelect={() => handlers.onEdit(row.original)}>
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {row.original.is_active ? (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => handlers.onDeactivate(row.original)}
+              >
+                Deactivate
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                onSelect={() => handlers.onActivate(row.original)}
+              >
+                Activate
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       ),
@@ -270,6 +327,7 @@ export function DataTable({
   data: EmployeeDirectoryRow[];
   branches: EmployeeBranchOption[];
 }) {
+  const router = useRouter();
   const [data, setData] = React.useState(initialData);
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({});
@@ -280,6 +338,50 @@ export function DataTable({
   });
   const [branchFilter, setBranchFilter] =
     React.useState<BranchFilterValue>("all");
+
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
+  const [editingRow, setEditingRow] =
+    React.useState<EmployeeDirectoryRow | null>(null);
+
+  const [deactivateOpen, setDeactivateOpen] = React.useState(false);
+  const [deactivateTarget, setDeactivateTarget] =
+    React.useState<EmployeeDirectoryRow | null>(null);
+  const [deactivatePending, startDeactivate] = React.useTransition();
+
+  const openCreate = React.useCallback(() => {
+    setFormMode("create");
+    setEditingRow(null);
+    setFormOpen(true);
+  }, []);
+
+  const openEdit = React.useCallback((row: EmployeeDirectoryRow) => {
+    setFormMode("edit");
+    setEditingRow(row);
+    setFormOpen(true);
+  }, []);
+
+  const openDeactivate = React.useCallback((row: EmployeeDirectoryRow) => {
+    setDeactivateTarget(row);
+    setDeactivateOpen(true);
+  }, []);
+
+  const [, startActivate] = React.useTransition();
+
+  const handleActivate = React.useCallback(
+    (row: EmployeeDirectoryRow) => {
+      startActivate(async () => {
+        const result = await activateEmployeeUser(row.user_id);
+        if (!result.ok) {
+          toast.error(result.message);
+          return;
+        }
+        toast.success("Employee activated");
+        router.refresh();
+      });
+    },
+    [router],
+  );
 
   React.useEffect(() => {
     setData(initialData);
@@ -294,8 +396,13 @@ export function DataTable({
   }, [data, branchFilter]);
 
   const columns = React.useMemo(
-    () => employeeColumns(branches),
-    [branches],
+    () =>
+      employeeColumns(branches, {
+        onEdit: openEdit,
+        onDeactivate: openDeactivate,
+        onActivate: handleActivate,
+      }),
+    [branches, openEdit, openDeactivate, handleActivate],
   );
 
   const table = useReactTable({
@@ -331,6 +438,60 @@ export function DataTable({
 
   return (
     <div className="flex w-full flex-col gap-6">
+      <EmployeeFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        mode={formMode}
+        row={formMode === "edit" ? editingRow : null}
+        branches={branches}
+      />
+
+      <AlertDialog
+        open={deactivateOpen}
+        onOpenChange={(next) => {
+          if (!deactivatePending) setDeactivateOpen(next);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate employee?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deactivateTarget
+                ? `“${formatEmployeeName(deactivateTarget)}” (${deactivateTarget.email}) will be marked inactive.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deactivatePending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deactivatePending || !deactivateTarget}
+              onClick={(e) => {
+                e.preventDefault();
+                if (!deactivateTarget) return;
+                startDeactivate(async () => {
+                  const result = await deactivateEmployeeUser(
+                    deactivateTarget.user_id,
+                  );
+                  if (!result.ok) {
+                    toast.error(result.message);
+                    return;
+                  }
+                  toast.success("Employee deactivated");
+                  setDeactivateOpen(false);
+                  setDeactivateTarget(null);
+                  router.refresh();
+                });
+              }}
+            >
+              {deactivatePending ? "Deactivating…" : "Deactivate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="flex items-center justify-end px-4 lg:px-6">
         <div className="flex flex-wrap items-center justify-end gap-2">
           <DropdownMenu>
@@ -391,9 +552,9 @@ export function DataTable({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Button variant="outline" size="sm" type="button">
+          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
             <PlusIcon />
-            <span className="hidden lg:inline">Add Section</span>
+            <span className="hidden lg:inline">Add employee</span>
           </Button>
         </div>
       </div>
@@ -420,7 +581,12 @@ export function DataTable({
             <TableBody>
               {table.getRowModel().rows?.length ? (
                 table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
+                  <TableRow
+                    key={row.id}
+                    className={cn(
+                      !row.original.is_active && "text-muted-foreground",
+                    )}
+                  >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
                         {flexRender(

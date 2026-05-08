@@ -5,14 +5,37 @@ import { z } from "zod";
 
 import { createClient } from "@/lib/supabase/server";
 
+export type EmployeeMutationResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
 const assignSchema = z.object({
   userId: z.string().uuid(),
   branchId: z.string().uuid().nullable(),
 });
 
+const employeeRoleSchema = z.enum(["manager", "staff"]);
+
+async function messageFromFunctionsError(error: unknown): Promise<string> {
+  if (!error || typeof error !== "object") {
+    return "Request failed";
+  }
+  const e = error as { message?: string; context?: { json?: () => Promise<unknown> } };
+  let msg = typeof e.message === "string" ? e.message : "Request failed";
+  if (e.context && typeof e.context.json === "function") {
+    try {
+      const body = (await e.context.json()) as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+  }
+  return msg;
+}
+
 export async function assignEmployeeBranch(
   input: unknown,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<EmployeeMutationResult> {
   const parsed = assignSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, message: "Invalid input" };
@@ -23,6 +46,149 @@ export async function assignEmployeeBranch(
     .from("users")
     .update({ branch_id: parsed.data.branchId })
     .eq("id", parsed.data.userId);
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/admin/users/employees");
+  return { ok: true };
+}
+
+const createEmployeeSchema = z.object({
+  email: z.string().trim().email("Enter a valid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  first_name: z.string().trim().min(1, "First name is required"),
+  middle_name: z.string().trim().optional(),
+  last_name: z.string().trim().min(1, "Last name is required"),
+  employee_role: employeeRoleSchema,
+  prefix: z.string().trim().min(1, "Prefix is required"),
+  branch_id: z.string().uuid().nullable().optional(),
+});
+
+export async function createEmployeeUser(
+  input: unknown,
+): Promise<EmployeeMutationResult> {
+  const parsed = createEmployeeSchema.safeParse(input);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => i.message).join("; ");
+    return { ok: false, message: msg || "Invalid form data" };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.functions.invoke(
+    "create_new_employee_user",
+    {
+      body: {
+        email: parsed.data.email,
+        password: parsed.data.password,
+        first_name: parsed.data.first_name,
+        middle_name: parsed.data.middle_name,
+        last_name: parsed.data.last_name,
+        employee_role: parsed.data.employee_role,
+        prefix: parsed.data.prefix,
+        branch_id: parsed.data.branch_id ?? null,
+      },
+    },
+  );
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: await messageFromFunctionsError(error) };
+  }
+
+  if (data && typeof data === "object" && "error" in data) {
+    const err = (data as { error?: string }).error;
+    if (err) return { ok: false, message: err };
+  }
+
+  revalidatePath("/admin/users/employees");
+  return { ok: true };
+}
+
+const updateEmployeeSchema = z.object({
+  employeeId: z.string().uuid(),
+  first_name: z.string().trim().min(1, "First name is required"),
+  middle_name: z.string().trim().nullable(),
+  last_name: z.string().trim().min(1, "Last name is required"),
+  prefix: z.string().trim().min(1, "Prefix is required"),
+  employee_role: employeeRoleSchema,
+});
+
+export async function updateEmployeeRecord(
+  input: unknown,
+): Promise<EmployeeMutationResult> {
+  const parsed = updateEmployeeSchema.safeParse(input);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => i.message).join("; ");
+    return { ok: false, message: msg || "Invalid form data" };
+  }
+
+  const middle =
+    parsed.data.middle_name == null || parsed.data.middle_name === ""
+      ? null
+      : parsed.data.middle_name;
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("employees")
+    .update({
+      first_name: parsed.data.first_name,
+      middle_name: middle,
+      last_name: parsed.data.last_name,
+      prefix: parsed.data.prefix,
+      employee_role: parsed.data.employee_role,
+    })
+    .eq("id", parsed.data.employeeId);
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/admin/users/employees");
+  return { ok: true };
+}
+
+const userIdSchema = z.string().uuid();
+
+export async function deactivateEmployeeUser(
+  userId: string,
+): Promise<EmployeeMutationResult> {
+  const idParse = userIdSchema.safeParse(userId);
+  if (!idParse.success) {
+    return { ok: false, message: "Invalid user id" };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("users")
+    .update({ is_active: false })
+    .eq("id", idParse.data);
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/admin/users/employees");
+  return { ok: true };
+}
+
+export async function activateEmployeeUser(
+  userId: string,
+): Promise<EmployeeMutationResult> {
+  const idParse = userIdSchema.safeParse(userId);
+  if (!idParse.success) {
+    return { ok: false, message: "Invalid user id" };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("users")
+    .update({ is_active: true })
+    .eq("id", idParse.data);
 
   if (error) {
     console.error(error);

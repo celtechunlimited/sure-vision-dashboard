@@ -14,6 +14,7 @@ export type EmployeeDirectoryRow = {
   user_created_at: string;
   branch_short_name: string | null;
   branch_long_name: string | null;
+  is_active: boolean;
 };
 
 export type EmployeeBranchOption = {
