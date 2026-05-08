@@ -87,7 +87,6 @@ export function BranchSwitcher() {
     ? "Loading…"
     : selected?.long_name ??
       (branches.length === 0 ? "No branch assigned" : "Branch");
-  const subtitle = loading ? "" : selected?.short_name ?? "";
 
   const branchButton = (
     <SidebarMenuButton
@@ -104,11 +103,6 @@ export function BranchSwitcher() {
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 leading-none">
         <span className="truncate font-medium">{title}</span>
-        {subtitle ? (
-          <span className="truncate text-xs text-muted-foreground">
-            {subtitle}
-          </span>
-        ) : null}
       </div>
       {canSwitchBranches ? (
         <ChevronsUpDown className="ml-auto shrink-0" />
@@ -134,9 +128,6 @@ export function BranchSwitcher() {
                 >
                   <span className="min-w-0 flex-1 truncate">
                     <span className="font-medium">{branch.long_name}</span>
-                    <span className="ml-1 text-muted-foreground">
-                      ({branch.short_name})
-                    </span>
                   </span>
                   {branch.id === selectedBranchId ? (
                     <Check className="size-4 shrink-0" />
