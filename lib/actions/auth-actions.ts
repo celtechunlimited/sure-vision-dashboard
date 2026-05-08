@@ -5,6 +5,29 @@ import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
 
+export type AppUserType = "super_admin" | "employee" | "patient";
+
+export async function getSessionUserType(): Promise<AppUserType | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return null;
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("user_type")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const t = profile?.user_type;
+  if (t === "super_admin" || t === "employee" || t === "patient") {
+    return t;
+  }
+  return null;
+}
+
 export type NavUserProfile = {
   displayName: string;
   email: string;
