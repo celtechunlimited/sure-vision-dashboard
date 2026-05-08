@@ -8,6 +8,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { NavUser } from "./nav-user"
 
 export function AppSidebar({
@@ -15,16 +16,18 @@ export function AppSidebar({
   ...props
 }: { isSuperAdmin: boolean } & React.ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar {...props}>
-      <SidebarHeader>
-        <BranchSwitcher />
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarNavGroups isSuperAdmin={isSuperAdmin} />
-      </SidebarContent>
-      <SidebarFooter>
-        <NavUser />
-      </SidebarFooter>
-    </Sidebar>
+    <TooltipProvider>
+      <Sidebar {...props}>
+        <SidebarHeader>
+          <BranchSwitcher />
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarNavGroups isSuperAdmin={isSuperAdmin} />
+        </SidebarContent>
+        <SidebarFooter>
+          <NavUser />
+        </SidebarFooter>
+      </Sidebar>
+    </TooltipProvider>
   )
 }
