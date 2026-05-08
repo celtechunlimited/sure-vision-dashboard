@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -26,8 +27,21 @@ import {
   EllipsisVerticalIcon,
   PlusIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 
-import type { BranchAdminRow } from "@/lib/actions/branch-actions";
+import { activateBranch, deactivateBranch } from "@/lib/actions/branch-actions";
+import type { BranchAdminRow } from "@/lib/branches/types";
+import { BranchFormDialog } from "@/components/admin/branches/branch-form-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -137,7 +151,7 @@ const branchGlobalFilter: FilterFn<BranchAdminRow> = (row, _columnId, value) => 
   return haystack.includes(q);
 };
 
-const columns: ColumnDef<BranchAdminRow>[] = [
+const branchTableBaseColumns: ColumnDef<BranchAdminRow>[] = [
   {
     accessorKey: "id",
     header: "ID",
@@ -232,9 +246,16 @@ const columns: ColumnDef<BranchAdminRow>[] = [
       );
     },
   },
-  {
+];
+
+function branchActionsColumn(handlers: {
+  onEdit: (row: BranchAdminRow) => void;
+  onDeactivate: (row: BranchAdminRow) => void;
+  onActivate: (row: BranchAdminRow) => void;
+}): ColumnDef<BranchAdminRow> {
+  return {
     id: "actions",
-    cell: () => (
+    cell: ({ row }) => (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -246,15 +267,28 @@ const columns: ColumnDef<BranchAdminRow>[] = [
             <span className="sr-only">Open menu</span>
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-32">
-          <DropdownMenuItem>Edit</DropdownMenuItem>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onSelect={() => handlers.onEdit(row.original)}>
+            Edit
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive">Delete</DropdownMenuItem>
+          {row.original.is_active ? (
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => handlers.onDeactivate(row.original)}
+            >
+              Deactivate
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onSelect={() => handlers.onActivate(row.original)}>
+              Activate
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     ),
-  },
-];
+  };
+}
 
 export function DataTable({ data }: { data: BranchAdminRow[] }) {
   const [columnVisibility, setColumnVisibility] =
@@ -268,6 +302,57 @@ export function DataTable({ data }: { data: BranchAdminRow[] }) {
     pageSize: 10,
   });
   const [globalFilter, setGlobalFilter] = React.useState("");
+  const router = useRouter();
+
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
+  const [editingBranch, setEditingBranch] =
+    React.useState<BranchAdminRow | null>(null);
+
+  const [deactivateOpen, setDeactivateOpen] = React.useState(false);
+  const [deactivateTarget, setDeactivateTarget] =
+    React.useState<BranchAdminRow | null>(null);
+  const [deactivatePending, startDeactivate] = React.useTransition();
+
+  const openCreate = React.useCallback(() => {
+    setFormMode("create");
+    setEditingBranch(null);
+    setFormOpen(true);
+  }, []);
+
+  const openEdit = React.useCallback((row: BranchAdminRow) => {
+    setFormMode("edit");
+    setEditingBranch(row);
+    setFormOpen(true);
+  }, []);
+
+  const openDeactivate = React.useCallback((row: BranchAdminRow) => {
+    setDeactivateTarget(row);
+    setDeactivateOpen(true);
+  }, []);
+
+  const [, startActivate] = React.useTransition();
+
+  const handleActivate = React.useCallback((row: BranchAdminRow) => {
+    startActivate(async () => {
+      const result = await activateBranch(row.id);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success("Branch activated");
+      router.refresh();
+    });
+  }, [router]);
+
+  const columns = React.useMemo(
+    () => [...branchTableBaseColumns, branchActionsColumn({
+      onEdit: openEdit,
+      onDeactivate: openDeactivate,
+      onActivate: handleActivate,
+    })],
+    [openEdit, openDeactivate, handleActivate],
+  );
 
   const table = useReactTable({
     data,
@@ -334,12 +419,63 @@ export function DataTable({ data }: { data: BranchAdminRow[] }) {
                 ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="sm" type="button">
+          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
             <PlusIcon />
             <span className="hidden lg:inline">Add branch</span>
           </Button>
         </div>
       </div>
+
+      <BranchFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        mode={formMode}
+        branch={formMode === "edit" ? editingBranch : null}
+      />
+
+      <AlertDialog
+        open={deactivateOpen}
+        onOpenChange={(next) => {
+          if (!deactivatePending) setDeactivateOpen(next);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate branch?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deactivateTarget
+                ? `“${deactivateTarget.long_name}” will be marked inactive and hidden from branch switchers that only list active branches.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deactivatePending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deactivatePending || !deactivateTarget}
+              onClick={(e) => {
+                e.preventDefault();
+                if (!deactivateTarget) return;
+                startDeactivate(async () => {
+                  const result = await deactivateBranch(deactivateTarget.id);
+                  if (!result.ok) {
+                    toast.error(result.message);
+                    return;
+                  }
+                  toast.success("Branch deactivated");
+                  setDeactivateOpen(false);
+                  setDeactivateTarget(null);
+                  router.refresh();
+                });
+              }}
+            >
+              {deactivatePending ? "Deactivating…" : "Deactivate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
         <div className="overflow-hidden rounded-lg border">
@@ -377,7 +513,9 @@ export function DataTable({ data }: { data: BranchAdminRow[] }) {
               ) : (
                 <TableRow>
                   <TableCell
-                    colSpan={columns.length}
+                    colSpan={
+                      branchTableBaseColumns.length + 1
+                    }
                     className="h-24 text-center"
                   >
                     No branches found.
