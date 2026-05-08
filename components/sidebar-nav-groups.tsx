@@ -10,7 +10,6 @@ import {
   IdCard,
   LayoutDashboard,
   Package,
-  Settings,
   UserRound,
   Users,
 } from "lucide-react";
@@ -84,7 +83,6 @@ const administrationNav: SidebarNavGroup = {
         },
       ],
     },
-    { title: "Settings", href: "/admin/settings", icon: Settings },
   ],
 };
 
