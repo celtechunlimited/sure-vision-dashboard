@@ -138,6 +138,34 @@ const employeeGlobalFilter: FilterFn<EmployeeDirectoryRow> = (
   return haystack.includes(q);
 };
 
+const employeeGlobalFilterBranch: FilterFn<EmployeeDirectoryRow> = (
+  row,
+  _columnId,
+  value,
+) => {
+  const q = String(value ?? "").trim().toLowerCase();
+  if (!q) return true;
+  const v = row.original;
+  const haystack = [
+    v.employee_id,
+    v.user_id,
+    formatEmployeeName(v),
+    v.prefix,
+    v.first_name,
+    v.middle_name,
+    v.last_name,
+    v.email,
+    v.employee_role,
+    v.user_type,
+    formatDate(v.employee_created_at),
+    formatDate(v.user_created_at),
+  ]
+    .filter((x) => x != null && String(x).length > 0)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(q);
+};
+
 function EmployeeColumnHeader<TData, TValue>({
   column,
   title,
@@ -249,6 +277,28 @@ function employeeColumns(config: {
   };
 }): ColumnDef<EmployeeDirectoryRow>[] {
   const { branches, variant, canEditRow, handlers } = config;
+
+  const statusColumn: ColumnDef<EmployeeDirectoryRow> = {
+    accessorKey: "is_active",
+    header: ({ column }) => (
+      <EmployeeColumnHeader column={column} title="Status" />
+    ),
+    cell: ({ row }) => {
+      const active = row.original.is_active;
+      return (
+        <Badge variant="outline" className="gap-1.5 font-normal">
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              active ? "bg-emerald-500" : "bg-red-500",
+            )}
+          />
+          {active ? "Active" : "Inactive"}
+        </Badge>
+      );
+    },
+  };
+
   return [
     {
       id: "name",
@@ -310,26 +360,7 @@ function employeeColumns(config: {
       ),
       cell: ({ row }) => formatDate(row.original.employee_created_at),
     },
-    {
-      accessorKey: "is_active",
-      header: ({ column }) => (
-        <EmployeeColumnHeader column={column} title="Status" />
-      ),
-      cell: ({ row }) => {
-        const active = row.original.is_active;
-        return (
-          <Badge variant="outline" className="gap-1.5 font-normal">
-            <span
-              className={cn(
-                "size-1.5 rounded-full",
-                active ? "bg-emerald-500" : "bg-red-500",
-              )}
-            />
-            {active ? "Active" : "Inactive"}
-          </Badge>
-        );
-      },
-    },
+    ...(variant === "admin" ? [statusColumn] : []),
     {
       id: "actions",
       enableSorting: false,
@@ -473,12 +504,13 @@ export function DataTable({
   }, [initialData]);
 
   const filteredData = React.useMemo(() => {
+    if (variant === "branch") return data;
     if (branchFilter === "all") return data;
     if (branchFilter === "unassigned") {
       return data.filter((r) => r.branch_id == null);
     }
     return data.filter((r) => r.branch_id === branchFilter);
-  }, [data, branchFilter]);
+  }, [data, branchFilter, variant]);
 
   const columns = React.useMemo(
     () =>
@@ -510,7 +542,8 @@ export function DataTable({
     onColumnFiltersChange: setColumnFilters,
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
-    globalFilterFn: employeeGlobalFilter,
+    globalFilterFn:
+      variant === "branch" ? employeeGlobalFilterBranch : employeeGlobalFilter,
     getRowId: (row) => row.employee_id,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -522,7 +555,7 @@ export function DataTable({
 
   React.useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [branchFilter, globalFilter]);
+  }, [branchFilter, globalFilter, variant]);
 
   const branchFilterLabel = React.useMemo(() => {
     if (branchFilter === "all") return "All branches";
@@ -631,32 +664,34 @@ export function DataTable({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <FilterIcon data-icon="inline-start" />
-                {branchFilterLabel}
-                <ChevronDownIcon data-icon="inline-end" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuItem onSelect={() => setBranchFilter("all")}>
-                All branches
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setBranchFilter("unassigned")}>
-                Unassigned
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {branches.map((b) => (
-                <DropdownMenuItem
-                  key={b.id}
-                  onSelect={() => setBranchFilter(b.id)}
-                >
-                  {b.long_name}
+          {variant === "admin" ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <FilterIcon data-icon="inline-start" />
+                  {branchFilterLabel}
+                  <ChevronDownIcon data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem onSelect={() => setBranchFilter("all")}>
+                  All branches
                 </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <DropdownMenuItem onSelect={() => setBranchFilter("unassigned")}>
+                  Unassigned
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {branches.map((b) => (
+                  <DropdownMenuItem
+                    key={b.id}
+                    onSelect={() => setBranchFilter(b.id)}
+                  >
+                    {b.long_name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
 
           {variant === "admin" ? (
             <Button variant="outline" size="sm" type="button" onClick={openCreate}>
@@ -692,7 +727,9 @@ export function DataTable({
                   <TableRow
                     key={row.id}
                     className={cn(
-                      !row.original.is_active && "text-muted-foreground",
+                      variant === "admin" &&
+                        !row.original.is_active &&
+                        "text-muted-foreground",
                     )}
                   >
                     {row.getVisibleCells().map((cell) => (
@@ -723,7 +760,8 @@ export function DataTable({
           <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
             {table.getFilteredRowModel().rows.length} employee
             {table.getFilteredRowModel().rows.length === 1 ? "" : "s"}
-            {branchFilter !== "all" || globalFilter.trim()
+            {(variant === "admin" && branchFilter !== "all") ||
+            globalFilter.trim()
               ? " (filtered)"
               : ""}
           </div>

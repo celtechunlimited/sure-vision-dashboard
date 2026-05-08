@@ -145,6 +145,36 @@ const patientGlobalFilter: FilterFn<PatientDirectoryRow> = (
   return haystack.includes(q);
 };
 
+const patientGlobalFilterBranch: FilterFn<PatientDirectoryRow> = (
+  row,
+  _columnId,
+  value,
+) => {
+  const q = String(value ?? "").trim().toLowerCase();
+  if (!q) return true;
+  const v = row.original;
+  const haystack = [
+    v.patient_id,
+    v.user_id,
+    formatPatientName(v),
+    v.first_name,
+    v.middle_name,
+    v.last_name,
+    v.email,
+    v.contact_number,
+    v.date_of_birth,
+    v.date_of_birth ? formatDateOnly(v.date_of_birth) : "",
+    v.address,
+    v.user_type,
+    formatDateTime(v.patient_created_at),
+    v.user_created_at ? formatDateTime(v.user_created_at) : "",
+  ]
+    .filter((x) => x != null && String(x).length > 0)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(q);
+};
+
 function PatientColumnHeader<TData, TValue>({
   column,
   title,
@@ -184,7 +214,30 @@ function patientColumns(
     onReactivate: (row: PatientDirectoryRow) => void;
   },
   allowAccountMutations: boolean,
+  showStatusColumn: boolean,
 ) {
+  const statusColumn: ColumnDef<PatientDirectoryRow> = {
+    accessorKey: "account_status",
+    header: ({ column }) => (
+      <PatientColumnHeader column={column} title="Status" />
+    ),
+    cell: ({ row }) => {
+      const s = row.original.account_status;
+      const dot =
+        s === "active"
+          ? "bg-emerald-500"
+          : s === "inactive"
+            ? "bg-red-500"
+            : "bg-muted-foreground";
+      return (
+        <Badge variant="outline" className="gap-1.5 font-normal">
+          <span className={cn("size-1.5 rounded-full", dot)} />
+          {statusLabel(s)}
+        </Badge>
+      );
+    },
+  };
+
   const cols: ColumnDef<PatientDirectoryRow>[] = [
     {
       id: "name",
@@ -236,27 +289,7 @@ function patientColumns(
       ),
       cell: ({ row }) => formatDateTime(row.original.patient_created_at),
     },
-    {
-      accessorKey: "account_status",
-      header: ({ column }) => (
-        <PatientColumnHeader column={column} title="Status" />
-      ),
-      cell: ({ row }) => {
-        const s = row.original.account_status;
-        const dot =
-          s === "active"
-            ? "bg-emerald-500"
-            : s === "inactive"
-              ? "bg-red-500"
-              : "bg-muted-foreground";
-        return (
-          <Badge variant="outline" className="gap-1.5 font-normal">
-            <span className={cn("size-1.5 rounded-full", dot)} />
-            {statusLabel(s)}
-          </Badge>
-        );
-      },
-    },
+    ...(showStatusColumn ? [statusColumn] : []),
     {
       id: "actions",
       enableSorting: false,
@@ -318,6 +351,7 @@ export function DataTable({
   variant?: "admin" | "branch";
 }) {
   const allowAccountMutations = variant === "admin";
+  const showStatusColumn = variant === "admin";
   const router = useRouter();
   const [data, setData] = React.useState(initialData);
   const [columnVisibility, setColumnVisibility] =
@@ -383,9 +417,9 @@ export function DataTable({
   }, [initialData]);
 
   const filteredData = React.useMemo(() => {
-    if (accountFilter === "all") return data;
+    if (!showStatusColumn || accountFilter === "all") return data;
     return data.filter((r) => r.account_status === accountFilter);
-  }, [data, accountFilter]);
+  }, [data, accountFilter, showStatusColumn]);
 
   const columns = React.useMemo(
     () =>
@@ -396,8 +430,15 @@ export function DataTable({
           onReactivate: handleReactivate,
         },
         allowAccountMutations,
+        showStatusColumn,
       ),
-    [openEdit, openDeactivate, handleReactivate, allowAccountMutations],
+    [
+      openEdit,
+      openDeactivate,
+      handleReactivate,
+      allowAccountMutations,
+      showStatusColumn,
+    ],
   );
 
   const table = useReactTable({
@@ -415,7 +456,9 @@ export function DataTable({
     onColumnFiltersChange: setColumnFilters,
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
-    globalFilterFn: patientGlobalFilter,
+    globalFilterFn: showStatusColumn
+      ? patientGlobalFilter
+      : patientGlobalFilterBranch,
     getRowId: (row) => row.patient_id,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -536,32 +579,34 @@ export function DataTable({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <FilterIcon data-icon="inline-start" />
-                {accountFilterLabel}
-                <ChevronDownIcon data-icon="inline-end" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuItem onSelect={() => setAccountFilter("all")}>
-                All statuses
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setAccountFilter("active")}>
-                Active
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setAccountFilter("inactive")}>
-                Inactive
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => setAccountFilter("no_account")}
-              >
-                No account
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {showStatusColumn ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <FilterIcon data-icon="inline-start" />
+                  {accountFilterLabel}
+                  <ChevronDownIcon data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem onSelect={() => setAccountFilter("all")}>
+                  All statuses
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setAccountFilter("active")}>
+                  Active
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setAccountFilter("inactive")}>
+                  Inactive
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => setAccountFilter("no_account")}
+                >
+                  No account
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
           <Button variant="outline" size="sm" type="button" onClick={openCreate}>
             <PlusIcon />
             <span className="hidden lg:inline">Add patient</span>
@@ -594,7 +639,8 @@ export function DataTable({
                   <TableRow
                     key={row.id}
                     className={cn(
-                      row.original.account_status === "inactive" &&
+                      showStatusColumn &&
+                        row.original.account_status === "inactive" &&
                         "text-muted-foreground",
                     )}
                   >
@@ -626,9 +672,11 @@ export function DataTable({
           <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
             {table.getFilteredRowModel().rows.length} patient
             {table.getFilteredRowModel().rows.length === 1 ? "" : "s"}
-            {accountFilter !== "all" || globalFilter.trim()
+            {showStatusColumn && accountFilter !== "all"
               ? " (filtered)"
-              : ""}
+              : globalFilter.trim()
+                ? " (filtered)"
+                : ""}
           </div>
           <div className="flex w-full items-center gap-8 lg:w-fit">
             <div className="hidden items-center gap-2 lg:flex">
