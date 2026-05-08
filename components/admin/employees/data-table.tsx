@@ -13,6 +13,8 @@ import {
   useReactTable,
   type Column,
   type ColumnDef,
+  type ColumnFiltersState,
+  type FilterFn,
   type Row,
   type SortingState,
   type VisibilityState,
@@ -63,6 +65,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -102,6 +105,38 @@ function formatDate(iso: string): string {
     timeStyle: "short",
   }).format(d);
 }
+
+const employeeGlobalFilter: FilterFn<EmployeeDirectoryRow> = (
+  row,
+  _columnId,
+  value,
+) => {
+  const q = String(value ?? "").trim().toLowerCase();
+  if (!q) return true;
+  const v = row.original;
+  const haystack = [
+    v.employee_id,
+    v.user_id,
+    formatEmployeeName(v),
+    v.prefix,
+    v.first_name,
+    v.middle_name,
+    v.last_name,
+    v.email,
+    v.employee_role,
+    v.branch_short_name,
+    v.branch_long_name,
+    v.branch_id,
+    v.user_type,
+    formatDate(v.employee_created_at),
+    formatDate(v.user_created_at),
+    v.is_active ? "active" : "inactive",
+  ]
+    .filter((x) => x != null && String(x).length > 0)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(q);
+};
 
 function EmployeeColumnHeader<TData, TValue>({
   column,
@@ -338,6 +373,9 @@ export function DataTable({
   });
   const [branchFilter, setBranchFilter] =
     React.useState<BranchFilterValue>("all");
+  const [columnFilters, setColumnFilters] =
+    React.useState<ColumnFiltersState>([]);
+  const [globalFilter, setGlobalFilter] = React.useState("");
 
   const [formOpen, setFormOpen] = React.useState(false);
   const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
@@ -411,11 +449,16 @@ export function DataTable({
     state: {
       sorting,
       columnVisibility,
+      columnFilters,
       pagination,
+      globalFilter,
     },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnFiltersChange: setColumnFilters,
     onPaginationChange: setPagination,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: employeeGlobalFilter,
     getRowId: (row) => row.employee_id,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -427,7 +470,7 @@ export function DataTable({
 
   React.useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [branchFilter]);
+  }, [branchFilter, globalFilter]);
 
   const branchFilterLabel = React.useMemo(() => {
     if (branchFilter === "all") return "All branches";
@@ -492,7 +535,13 @@ export function DataTable({
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="flex items-center justify-end px-4 lg:px-6">
+      <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
+        <Input
+          placeholder="Filter employees…"
+          value={globalFilter}
+          onChange={(e) => setGlobalFilter(e.target.value)}
+          className="max-w-sm"
+        />
         <div className="flex flex-wrap items-center justify-end gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -613,9 +662,11 @@ export function DataTable({
 
         <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
-            {filteredData.length} employee
-            {filteredData.length === 1 ? "" : "s"}
-            {branchFilter !== "all" ? " (filtered)" : ""}
+            {table.getFilteredRowModel().rows.length} employee
+            {table.getFilteredRowModel().rows.length === 1 ? "" : "s"}
+            {branchFilter !== "all" || globalFilter.trim()
+              ? " (filtered)"
+              : ""}
           </div>
           <div className="flex w-full items-center gap-8 lg:w-fit">
             <div className="hidden items-center gap-2 lg:flex">
