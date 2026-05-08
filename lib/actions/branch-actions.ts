@@ -8,6 +8,20 @@ export type BranchRow = {
   long_name: string;
 };
 
+/** Full row from `public.branches` for admin listing. */
+export type BranchAdminRow = {
+  id: string;
+  created_at: string;
+  long_name: string;
+  short_name: string;
+  address: string;
+  contact_number: string;
+  contact_email: string;
+  operating_hours: unknown;
+  appointment_slot_duration: number;
+  is_active: boolean;
+};
+
 export type BranchesForSwitcher = {
   branches: BranchRow[];
   userBranchId: string | null;
@@ -74,4 +88,21 @@ export async function getBranchesForSwitcher(): Promise<BranchesForSwitcher> {
     userBranchId,
     canSwitchBranches: false,
   };
+}
+
+export async function listBranchesForAdmin(): Promise<BranchAdminRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("branches")
+    .select(
+      "id, created_at, long_name, short_name, address, contact_number, contact_email, operating_hours, appointment_slot_duration, is_active",
+    )
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error(error);
+    return [];
+  }
+
+  return (data ?? []) as BranchAdminRow[];
 }

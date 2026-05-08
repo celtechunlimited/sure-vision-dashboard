@@ -1,12 +1,18 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { ReactNode } from "react";
 
-export default async function AdminSectionLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+
+function AdminSectionFallback() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center py-16">
+      <p className="text-sm text-muted-foreground">Loading…</p>
+    </div>
+  );
+}
+
+async function AdminSectionGate({ children }: { children: ReactNode }) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -27,4 +33,16 @@ export default async function AdminSectionLayout({
   }
 
   return <>{children}</>;
+}
+
+export default function AdminSectionLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return (
+    <Suspense fallback={<AdminSectionFallback />}>
+      <AdminSectionGate>{children}</AdminSectionGate>
+    </Suspense>
+  );
 }
