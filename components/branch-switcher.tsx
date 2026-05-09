@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronsUpDown, GalleryVerticalEnd } from "lucide-react";
+import { Check, ChevronsUpDown, Glasses } from "lucide-react";
 
 import { getBranchesForSwitcher } from "@/lib/actions/branch-actions";
+import { syncBranchOperationsCookie } from "@/lib/actions/sync-branch-operations-cookie";
 import { useBranchStore } from "@/lib/stores/branch-store";
 import {
   DropdownMenu,
@@ -81,12 +82,18 @@ export function BranchSwitcher() {
     };
   }, [hydrated, setBranches, setSelectedBranchId]);
 
+  React.useEffect(() => {
+    if (!hydrated || !selectedBranchId) return;
+    void syncBranchOperationsCookie(selectedBranchId);
+  }, [hydrated, selectedBranchId]);
+
   const selected = branches.find((b) => b.id === selectedBranchId);
 
   const title = loading
     ? "Loading…"
     : selected?.long_name ??
       (branches.length === 0 ? "No branch assigned" : "Branch");
+  const subtitle = "Sure Vision Optical"
 
   const branchButton = (
     <SidebarMenuButton
@@ -99,10 +106,11 @@ export function BranchSwitcher() {
       disabled={loading || branches.length === 0}
     >
       <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-        <GalleryVerticalEnd className="size-4" />
+        <Glasses className="size-4" />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 leading-none">
         <span className="truncate font-medium">{title}</span>
+        <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
       </div>
       {canSwitchBranches ? (
         <ChevronsUpDown className="ml-auto shrink-0" />

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DataTable } from "@/components/admin/employees/data-table";
-import { listBranchesForAdmin } from "@/lib/actions/branch-actions";
+import { resolveBranchOperationsScope } from "@/lib/branch-operations-scope";
 import type { EmployeeDirectoryRow } from "@/lib/employees/types";
 import { createClient } from "@/lib/supabase/server";
 
@@ -30,19 +30,25 @@ export default async function EmployeesPage() {
 
   const viewerIsManager = myEmployee?.employee_role === "manager";
 
-  const [{ data: rows, error }, branchRows] = await Promise.all([
-    supabase
-      .from("employee_directory")
-      .select("*")
-      .order("email", { ascending: true }),
-    listBranchesForAdmin(),
-  ]);
+  const { branchId: operationsBranchId, switcherBranches } =
+    await resolveBranchOperationsScope();
+
+  let employeeQuery = supabase
+    .from("employee_directory")
+    .select("*")
+    .order("email", { ascending: true });
+
+  if (operationsBranchId) {
+    employeeQuery = employeeQuery.eq("branch_id", operationsBranchId);
+  }
+
+  const { data: rows, error } = await employeeQuery;
 
   if (error) {
     console.error(error);
   }
 
-  const branches = (branchRows ?? []).map((b) => ({
+  const branches = switcherBranches.map((b) => ({
     id: b.id,
     short_name: b.short_name,
     long_name: b.long_name,
