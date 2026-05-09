@@ -34,7 +34,7 @@ async function DashboardLayoutInner({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider>
       <AppSidebar isSuperAdmin={userType === "super_admin"} />
-      <SidebarInset>
+      <SidebarInset className="min-h-0">
         <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Separator
@@ -42,7 +42,7 @@ async function DashboardLayoutInner({ children }: { children: ReactNode }) {
             className="mr-2 data-vertical:h-4 data-vertical:self-center"
           />
         </header>
-        <div>{children}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );

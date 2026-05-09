@@ -244,5 +244,6 @@ export async function upsertAppointmentWithDispensed(
   }
 
   revalidatePath("/appointments");
+  revalidatePath("/calendar");
   return { ok: true };
 }

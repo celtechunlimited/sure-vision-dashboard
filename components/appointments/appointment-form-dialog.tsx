@@ -110,6 +110,9 @@ export type AppointmentFormDialogProps = {
   initialDispensed: DispensedItemRow[];
   patients: PatientDirectoryRow[];
   products: ProductInventoryRow[];
+  /** When `mode` is `create`, pre-fill start/end from calendar slot selection. */
+  prefillStartIso?: string | null;
+  prefillEndIso?: string | null;
 };
 
 export function AppointmentFormDialog({
@@ -121,6 +124,8 @@ export function AppointmentFormDialog({
   initialDispensed,
   patients,
   products,
+  prefillStartIso = null,
+  prefillEndIso = null,
 }: AppointmentFormDialogProps) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
@@ -166,14 +171,14 @@ export function AppointmentFormDialog({
       setPatientName("");
       setPatientContact("");
       setPatientEmail("");
-      setStartLocal("");
-      setEndLocal("");
+      setStartLocal(toDatetimeLocalValue(prefillStartIso));
+      setEndLocal(toDatetimeLocalValue(prefillEndIso));
       setStatus("pending");
       setAppointmentType("");
       setNotes("");
       setLines([]);
     }
-  }, [open, mode, appointment, initialDispensed]);
+  }, [open, mode, appointment, initialDispensed, prefillStartIso, prefillEndIso]);
 
   function handlePatientSelect(p: PatientDirectoryRow | null) {
     if (!p) {
