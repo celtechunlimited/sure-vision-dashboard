@@ -245,5 +245,68 @@ export async function upsertAppointmentWithDispensed(
 
   revalidatePath("/appointments");
   revalidatePath("/calendar");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+/** Sets a pending appointment to confirmed; branch must match switcher scope. */
+export async function confirmAppointmentBooking(
+  appointmentId: unknown,
+): Promise<BranchMutationResult> {
+  const idParse = z.string().uuid().safeParse(appointmentId);
+  if (!idParse.success) {
+    return { ok: false, message: "Invalid appointment" };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, message: "Not signed in" };
+  }
+
+  const { data: row, error: fetchErr } = await supabase
+    .from("appointments")
+    .select("id, branch_id, status")
+    .eq("id", idParse.data)
+    .maybeSingle();
+
+  if (fetchErr) {
+    console.error(fetchErr);
+    return { ok: false, message: fetchErr.message };
+  }
+  if (!row?.branch_id) {
+    return { ok: false, message: "Appointment not found" };
+  }
+
+  const branchCheck = await assertBranchAllowed(row.branch_id);
+  if (!branchCheck.ok) return branchCheck;
+
+  if (row.status !== "pending") {
+    return { ok: false, message: "Only pending bookings can be confirmed" };
+  }
+
+  const { data: updated, error: updErr } = await supabase
+    .from("appointments")
+    .update({ status: "confirmed" })
+    .eq("id", idParse.data)
+    .eq("status", "pending")
+    .select("id");
+
+  if (updErr) {
+    console.error(updErr);
+    return { ok: false, message: updErr.message };
+  }
+  if (!updated?.length) {
+    return {
+      ok: false,
+      message: "Could not confirm this booking (it may have been updated).",
+    };
+  }
+
+  revalidatePath("/appointments");
+  revalidatePath("/calendar");
+  revalidatePath("/");
   return { ok: true };
 }
