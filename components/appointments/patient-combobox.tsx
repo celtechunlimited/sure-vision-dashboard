@@ -26,6 +26,10 @@ export type PatientComboboxProps = {
   valuePatientId: string | null;
   onSelectPatient: (patient: PatientDirectoryRow | null) => void;
   disabled?: boolean;
+  /** `filter`: “All patients” copy for table filters. Default `form` for appointment dialog. */
+  purpose?: "form" | "filter";
+  /** Merged into the trigger `Button` (e.g. `w-[220px]` in toolbars). */
+  triggerClassName?: string;
 };
 
 export function PatientCombobox({
@@ -33,6 +37,8 @@ export function PatientCombobox({
   valuePatientId,
   onSelectPatient,
   disabled,
+  purpose = "form",
+  triggerClassName,
 }: PatientComboboxProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -41,7 +47,14 @@ export function PatientCombobox({
     [patients, valuePatientId],
   );
 
-  const label = selected ? patientDirectoryFullName(selected) : "Search clients…";
+  const emptyLabel =
+    purpose === "filter" ? "All patients" : "Search clients…";
+  const clearItemLabel =
+    purpose === "filter"
+      ? "All patients"
+      : "No linked client (manual only)";
+
+  const label = selected ? patientDirectoryFullName(selected) : emptyLabel;
 
   return (
     <Popover open={open} onOpenChange={setOpen} modal={false}>
@@ -49,10 +62,14 @@ export function PatientCombobox({
         <Button
           type="button"
           variant="outline"
+          size={purpose === "filter" ? "sm" : "default"}
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
-          className="w-full justify-between font-normal"
+          className={cn(
+            "w-full justify-between font-normal",
+            triggerClassName,
+          )}
         >
           <span className="truncate">{label}</span>
           <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
@@ -71,7 +88,7 @@ export function PatientCombobox({
                   setOpen(false);
                 }}
               >
-                <span className="text-muted-foreground">No linked client (manual only)</span>
+                <span className="text-muted-foreground">{clearItemLabel}</span>
                 <Check
                   className={cn(
                     "ml-auto size-4",

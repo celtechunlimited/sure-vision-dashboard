@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 
 import { AppointmentFormDialog } from "@/components/appointments/appointment-form-dialog";
+import { PatientCombobox } from "@/components/appointments/patient-combobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -95,6 +96,12 @@ const statusEquals: FilterFn<AppointmentRow> = (row, columnId, filterValue) => {
   return row.getValue(columnId) === v;
 };
 
+const patientIdEquals: FilterFn<AppointmentRow> = (row, columnId, filterValue) => {
+  const v = filterValue as string | undefined;
+  if (!v || v === "__all__") return true;
+  return row.getValue(columnId) === v;
+};
+
 const appointmentGlobalFilter: FilterFn<AppointmentRow> = (
   row,
   _columnId,
@@ -155,7 +162,9 @@ const baseColumns: ColumnDef<AppointmentRow>[] = [
   },
   {
     accessorKey: "patient_id",
+    id: "patient_id",
     header: "Patient ID",
+    filterFn: patientIdEquals,
     cell: ({ row }) => (
       <span className="font-mono text-xs">
         {row.original.patient_id
@@ -358,6 +367,10 @@ export function DataTable({
     (table.getColumn("status")?.getFilterValue() as string | undefined) ??
     "__all__";
 
+  const patientIdFilter = table.getColumn("patient_id")?.getFilterValue() as
+    | string
+    | undefined;
+
   return (
     <div className="flex w-full flex-col gap-6">
       <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
@@ -368,6 +381,17 @@ export function DataTable({
           className="max-w-sm"
         />
         <div className="flex items-center gap-2">
+          <PatientCombobox
+            purpose="filter"
+            patients={patients}
+            valuePatientId={patientIdFilter ?? null}
+            onSelectPatient={(p) =>
+              table
+                .getColumn("patient_id")
+                ?.setFilterValue(p?.patient_id ?? undefined)
+            }
+            triggerClassName="w-[min(100%,280px)] shrink-0 sm:w-[240px]"
+          />
           <Select
             value={statusFilter}
             onValueChange={(v) => {
