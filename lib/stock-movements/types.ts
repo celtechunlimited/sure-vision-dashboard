@@ -17,6 +17,8 @@ export type StockMovementLineRow = {
   appointment_id: string | null;
   notes: string | null;
   performed_by: string | null;
+  /** Set when movement was synced from `dispensed_items`. */
+  dispensed_item_id: string | null;
   product_short_name: string | null;
   product_long_name: string | null;
   product_sku: string | null;

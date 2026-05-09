@@ -145,6 +145,11 @@ export function StockMovementDetailDialog({
                   mono
                 />
                 <DetailField
+                  label="Dispensed item ID"
+                  value={uuidOrDash(row.dispensed_item_id)}
+                  mono
+                />
+                <DetailField
                   label="Performed by (employee ID)"
                   value={uuidOrDash(row.performed_by)}
                   mono

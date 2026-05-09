@@ -24,9 +24,10 @@ import {
   ChevronsRightIcon,
   Columns3Icon,
   EllipsisVerticalIcon,
+  PlusIcon,
 } from "lucide-react";
 
-import { StockMovementDetailDialog } from "@/components/stock-movements/stock-movement-detail-dialog";
+import { AppointmentFormDialog } from "@/components/appointments/appointment-form-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,14 +55,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PRODUCT_CATEGORY_LABELS } from "@/lib/products/types";
-import type { StockMovementLineRow } from "@/lib/stock-movements/types";
+import type {
+  AppointmentRow,
+  AppointmentStatus,
+  DispensedItemRow,
+} from "@/lib/appointments/types";
 import {
-  MOVEMENT_TYPE_LABELS,
-  MOVEMENT_TYPES,
-} from "@/lib/stock-movements/types";
+  APPOINTMENT_STATUSES,
+  APPOINTMENT_STATUS_LABELS,
+  APPOINTMENT_TYPE_LABELS,
+} from "@/lib/appointments/types";
+import type { PatientDirectoryRow } from "@/lib/patients/types";
+import type { ProductInventoryRow } from "@/lib/products/types";
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return new Intl.DateTimeFormat(undefined, {
@@ -70,21 +78,24 @@ function formatDate(iso: string): string {
   }).format(d);
 }
 
-function movementLabel(t: string): string {
-  return MOVEMENT_TYPE_LABELS[t] ?? t;
+function statusLabel(s: string | null): string {
+  if (!s) return "—";
+  const k = s as AppointmentStatus;
+  return APPOINTMENT_STATUS_LABELS[k] ?? s;
 }
 
-const movementTypeEquals: FilterFn<StockMovementLineRow> = (
-  row,
-  columnId,
-  filterValue,
-) => {
+function typeLabel(s: string | null): string {
+  if (!s) return "—";
+  return APPOINTMENT_TYPE_LABELS[s as keyof typeof APPOINTMENT_TYPE_LABELS] ?? s;
+}
+
+const statusEquals: FilterFn<AppointmentRow> = (row, columnId, filterValue) => {
   const v = filterValue as string | undefined;
   if (!v || v === "__all__") return true;
   return row.getValue(columnId) === v;
 };
 
-const stockMovementGlobalFilter: FilterFn<StockMovementLineRow> = (
+const appointmentGlobalFilter: FilterFn<AppointmentRow> = (
   row,
   _columnId,
   value,
@@ -94,45 +105,48 @@ const stockMovementGlobalFilter: FilterFn<StockMovementLineRow> = (
     .toLowerCase();
   if (!q) return true;
   const r = row.original;
-  const cat =
-    r.product_category &&
-    r.product_category in PRODUCT_CATEGORY_LABELS
-      ? PRODUCT_CATEGORY_LABELS[
-          r.product_category as keyof typeof PRODUCT_CATEGORY_LABELS
-        ]
-      : String(r.product_category ?? "");
   const haystack = [
     r.id,
     r.branch_id,
-    r.product_id,
-    r.appointment_id,
-    r.dispensed_item_id,
-    r.performed_by,
-    r.movement_type,
-    movementLabel(String(r.movement_type)),
+    r.patient_id,
+    r.patient_name,
+    r.patient_contact_number,
+    r.patient_email,
+    r.status,
+    statusLabel(r.status),
+    r.appointment_type,
+    typeLabel(r.appointment_type),
     r.notes,
-    r.product_long_name,
-    r.product_short_name,
-    r.product_sku,
-    r.product_description,
-    r.product_category,
-    cat,
-    r.quantity != null ? String(r.quantity) : "",
-    r.product_unit_price,
-    r.product_is_active != null ? (r.product_is_active ? "active" : "inactive") : "",
+    r.created_by,
     formatDate(r.created_at),
+    formatDate(r.start_time),
+    formatDate(r.end_time),
   ]
     .join(" ")
     .toLowerCase();
   return haystack.includes(q);
 };
 
-const baseColumns: ColumnDef<StockMovementLineRow>[] = [
+const baseColumns: ColumnDef<AppointmentRow>[] = [
+  {
+    accessorKey: "id",
+    header: "ID",
+    cell: ({ row }) => (
+      <span className="font-mono text-xs" title={row.original.id}>
+        {`${row.original.id.slice(0, 8)}…`}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "created_at",
+    header: "Created",
+    cell: ({ row }) => formatDate(row.original.created_at),
+  },
   {
     accessorKey: "branch_id",
-    header: "Branch ID",
+    header: "Branch",
     cell: ({ row }) => (
-      <span className="font-mono text-xs" title={row.original.branch_id ?? ""}>
+      <span className="font-mono text-xs">
         {row.original.branch_id
           ? `${row.original.branch_id.slice(0, 8)}…`
           : "—"}
@@ -140,61 +154,67 @@ const baseColumns: ColumnDef<StockMovementLineRow>[] = [
     ),
   },
   {
-    accessorKey: "created_at",
-    header: "Date",
-    cell: ({ row }) => formatDate(row.original.created_at),
+    accessorKey: "patient_id",
+    header: "Patient ID",
+    cell: ({ row }) => (
+      <span className="font-mono text-xs">
+        {row.original.patient_id
+          ? `${row.original.patient_id.slice(0, 8)}…`
+          : "—"}
+      </span>
+    ),
   },
   {
-    accessorKey: "movement_type",
-    id: "movement_type",
-    header: "Type",
-    filterFn: movementTypeEquals,
+    accessorKey: "patient_name",
+    header: "Patient name",
+    cell: ({ row }) => (
+      <span className="max-w-[180px] truncate font-medium">
+        {row.original.patient_name?.trim() ? row.original.patient_name : "—"}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "patient_contact_number",
+    header: "Contact",
+    cell: ({ row }) => row.original.patient_contact_number ?? "—",
+  },
+  {
+    accessorKey: "patient_email",
+    header: "Email",
+    cell: ({ row }) => (
+      <span className="max-w-[160px] truncate">
+        {row.original.patient_email?.trim() ? row.original.patient_email : "—"}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "start_time",
+    header: "Start",
+    cell: ({ row }) => formatDate(row.original.start_time),
+  },
+  {
+    accessorKey: "end_time",
+    header: "End",
+    cell: ({ row }) => formatDate(row.original.end_time),
+  },
+  {
+    accessorKey: "status",
+    id: "status",
+    header: "Status",
+    filterFn: statusEquals,
     cell: ({ row }) => {
-      const t = String(row.original.movement_type);
+      const s = String(row.original.status ?? "");
       return (
         <Badge variant="outline" className="font-normal">
-          {movementLabel(t)}
+          {statusLabel(s)}
         </Badge>
       );
     },
   },
   {
-    accessorKey: "quantity",
-    header: () => <div className="text-right">Qty</div>,
-    cell: ({ row }) => (
-      <div className="text-right tabular-nums">
-        {row.original.quantity ?? "—"}
-      </div>
-    ),
-  },
-  {
-    id: "product_name",
-    accessorFn: (r) => r.product_long_name ?? r.product_short_name ?? "",
-    header: "Product",
-    cell: ({ row }) => (
-      <span
-        className="max-w-[220px] truncate font-medium"
-        title={
-          row.original.product_long_name ??
-          row.original.product_short_name ??
-          ""
-        }
-      >
-        {row.original.product_long_name ??
-          row.original.product_short_name ??
-          "—"}
-      </span>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "product_sku",
-    header: "SKU",
-    cell: ({ row }) => (
-      <span className="font-mono text-xs">
-        {row.original.product_sku ?? "—"}
-      </span>
-    ),
+    accessorKey: "appointment_type",
+    header: "Type",
+    cell: ({ row }) => typeLabel(row.original.appointment_type as string | null),
   },
   {
     accessorKey: "notes",
@@ -208,11 +228,22 @@ const baseColumns: ColumnDef<StockMovementLineRow>[] = [
       </span>
     ),
   },
+  {
+    accessorKey: "created_by",
+    header: "Created by",
+    cell: ({ row }) => (
+      <span className="font-mono text-xs">
+        {row.original.created_by
+          ? `${row.original.created_by.slice(0, 8)}…`
+          : "—"}
+      </span>
+    ),
+  },
 ];
 
 function actionsColumn(handlers: {
-  onView: (row: StockMovementLineRow) => void;
-}): ColumnDef<StockMovementLineRow> {
+  onEdit: (row: AppointmentRow) => void;
+}): ColumnDef<AppointmentRow> {
   return {
     id: "actions",
     cell: ({ row }) => (
@@ -227,9 +258,9 @@ function actionsColumn(handlers: {
             <span className="sr-only">Open menu</span>
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48">
-          <DropdownMenuItem onSelect={() => handlers.onView(row.original)}>
-            View details
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onSelect={() => handlers.onEdit(row.original)}>
+            Edit
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -237,10 +268,27 @@ function actionsColumn(handlers: {
   };
 }
 
-export function DataTable({ data }: { data: StockMovementLineRow[] }) {
+export type AppointmentsDataTableProps = {
+  data: AppointmentRow[];
+  dispensedByAppointment: Record<string, DispensedItemRow[]>;
+  patients: PatientDirectoryRow[];
+  products: ProductInventoryRow[];
+  defaultBranchId: string | null;
+};
+
+export function DataTable({
+  data,
+  dispensedByAppointment,
+  patients,
+  products,
+  defaultBranchId,
+}: AppointmentsDataTableProps) {
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({
+      id: false,
       branch_id: false,
+      patient_id: false,
+      created_by: false,
     });
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     [],
@@ -254,19 +302,31 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
   });
   const [globalFilter, setGlobalFilter] = React.useState("");
 
-  const [detailOpen, setDetailOpen] = React.useState(false);
-  const [detailRow, setDetailRow] = React.useState<StockMovementLineRow | null>(
-    null,
-  );
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
+  const [editingAppointment, setEditingAppointment] =
+    React.useState<AppointmentRow | null>(null);
 
-  const openDetail = React.useCallback((row: StockMovementLineRow) => {
-    setDetailRow(row);
-    setDetailOpen(true);
+  const initialDispensed = React.useMemo(() => {
+    if (!editingAppointment) return [];
+    return dispensedByAppointment[editingAppointment.id] ?? [];
+  }, [editingAppointment, dispensedByAppointment]);
+
+  const openCreate = React.useCallback(() => {
+    setFormMode("create");
+    setEditingAppointment(null);
+    setFormOpen(true);
+  }, []);
+
+  const openEdit = React.useCallback((row: AppointmentRow) => {
+    setFormMode("edit");
+    setEditingAppointment(row);
+    setFormOpen(true);
   }, []);
 
   const columns = React.useMemo(
-    () => [...baseColumns, actionsColumn({ onView: openDetail })],
-    [openDetail],
+    () => [...baseColumns, actionsColumn({ onEdit: openEdit })],
+    [openEdit],
   );
 
   const table = useReactTable({
@@ -285,7 +345,7 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
     onColumnVisibilityChange: setColumnVisibility,
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
-    globalFilterFn: stockMovementGlobalFilter,
+    globalFilterFn: appointmentGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -294,37 +354,41 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
     getFacetedUniqueValues: getFacetedUniqueValues(),
   });
 
-  const typeFilter =
-    (table.getColumn("movement_type")?.getFilterValue() as string | undefined) ??
+  const statusFilter =
+    (table.getColumn("status")?.getFilterValue() as string | undefined) ??
     "__all__";
 
   return (
     <div className="flex w-full flex-col gap-6">
-      <div className="flex flex-col gap-4 px-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between lg:px-6">
+      <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
         <Input
-          placeholder="Filter movements…"
+          placeholder="Filter appointments…"
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
           className="max-w-sm"
         />
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <Select
-            value={typeFilter}
+            value={statusFilter}
             onValueChange={(v) => {
               table
-                .getColumn("movement_type")
+                .getColumn("status")
                 ?.setFilterValue(v === "__all__" ? undefined : v);
             }}
           >
-            <SelectTrigger className="w-[200px]" size="sm" aria-label="Movement type">
-              <SelectValue placeholder="Type" />
+            <SelectTrigger
+              className="w-[200px]"
+              size="sm"
+              aria-label="Appointment status"
+            >
+              <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectGroup>
-                <SelectItem value="__all__">All types</SelectItem>
-                {MOVEMENT_TYPES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {MOVEMENT_TYPE_LABELS[t]}
+                <SelectItem value="__all__">All statuses</SelectItem>
+                {APPOINTMENT_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {APPOINTMENT_STATUS_LABELS[s]}
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -360,13 +424,34 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
                 ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            onClick={openCreate}
+            disabled={!defaultBranchId}
+            title={
+              !defaultBranchId
+                ? "Select a branch in the sidebar to add appointments"
+                : undefined
+            }
+          >
+            <PlusIcon />
+            <span className="hidden lg:inline">Add appointment</span>
+          </Button>
         </div>
       </div>
 
-      <StockMovementDetailDialog
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-        row={detailRow}
+      <AppointmentFormDialog
+        key={formMode === "edit" && editingAppointment ? editingAppointment.id : "new"}
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        mode={formMode}
+        branchId={defaultBranchId}
+        appointment={editingAppointment}
+        initialDispensed={initialDispensed}
+        patients={patients}
+        products={products}
       />
 
       <div className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
@@ -408,7 +493,7 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
                     colSpan={columns.length}
                     className="h-24 text-center"
                   >
-                    No stock movements found.
+                    No appointments found.
                   </TableCell>
                 </TableRow>
               )}
@@ -418,12 +503,12 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
 
         <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex-1 text-sm text-muted-foreground">
-            {table.getFilteredRowModel().rows.length} movement
+            {table.getFilteredRowModel().rows.length} appointment
             {table.getFilteredRowModel().rows.length === 1 ? "" : "s"}
           </div>
           <div className="flex w-full flex-col gap-4 sm:w-auto sm:flex-row sm:items-center sm:gap-8">
             <div className="flex items-center gap-2">
-              <Label htmlFor="sm-rows-per-page" className="text-sm font-medium">
+              <Label htmlFor="appt-rows-per-page" className="text-sm font-medium">
                 Rows per page
               </Label>
               <Select
@@ -432,7 +517,11 @@ export function DataTable({ data }: { data: StockMovementLineRow[] }) {
                   table.setPageSize(Number(value));
                 }}
               >
-                <SelectTrigger size="sm" className="w-20" id="sm-rows-per-page">
+                <SelectTrigger
+                  size="sm"
+                  className="w-20"
+                  id="appt-rows-per-page"
+                >
                   <SelectValue
                     placeholder={table.getState().pagination.pageSize}
                   />
