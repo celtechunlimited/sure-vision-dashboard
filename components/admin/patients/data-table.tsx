@@ -398,9 +398,10 @@ export function DataTable({
 
   const handleReactivate = React.useCallback(
     (row: PatientDirectoryRow) => {
-      if (!row.user_id) return;
+      const userId = row.user_id;
+      if (!userId) return;
       startReactivate(async () => {
-        const result = await activatePatientUser(row.user_id);
+        const result = await activatePatientUser(userId);
         if (!result.ok) {
           toast.error(result.message);
           return;

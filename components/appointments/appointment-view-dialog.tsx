@@ -11,6 +11,12 @@ import type {
   AppointmentType,
   DispensedItemRow,
 } from "@/lib/appointments/types";
+import {
+  APPOINTMENT_STATUSES,
+  APPOINTMENT_STATUS_LABELS,
+  APPOINTMENT_TYPES,
+  APPOINTMENT_TYPE_LABELS,
+} from "@/lib/appointments/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
