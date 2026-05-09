@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -23,14 +24,32 @@ import {
   ChevronsLeftIcon,
   ChevronsRightIcon,
   Columns3Icon,
+  EllipsisVerticalIcon,
+  PlusIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 
+import { setProductActive } from "@/lib/actions/product-actions";
+import { ProductFormDialog } from "@/components/products/product-form-dialog";
+import { StockMovementDialog } from "@/components/products/stock-movement-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -118,7 +137,7 @@ const productGlobalFilter: FilterFn<ProductInventoryRow> = (
   return haystack.includes(q);
 };
 
-const productColumns: ColumnDef<ProductInventoryRow>[] = [
+const productTableBaseColumns: ColumnDef<ProductInventoryRow>[] = [
   {
     accessorKey: "branch_id",
     header: "Branch ID",
@@ -260,7 +279,63 @@ const productColumns: ColumnDef<ProductInventoryRow>[] = [
   },
 ];
 
-export function DataTable({ data }: { data: ProductInventoryRow[] }) {
+function productActionsColumn(handlers: {
+  onEdit: (row: ProductInventoryRow) => void;
+  onCreateMovement: (row: ProductInventoryRow) => void;
+  onDeactivate: (row: ProductInventoryRow) => void;
+  onActivate: (row: ProductInventoryRow) => void;
+}): ColumnDef<ProductInventoryRow> {
+  return {
+    id: "actions",
+    cell: ({ row }) => (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            className="flex size-8 text-muted-foreground data-[state=open]:bg-muted"
+            size="icon"
+          >
+            <EllipsisVerticalIcon />
+            <span className="sr-only">Open menu</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onSelect={() => handlers.onEdit(row.original)}>
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => handlers.onCreateMovement(row.original)}
+          >
+            Create movement
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {row.original.is_active ? (
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => handlers.onDeactivate(row.original)}
+            >
+              Deactivate
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onSelect={() => handlers.onActivate(row.original)}
+            >
+              Activate
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ),
+  };
+}
+
+export function DataTable({
+  data,
+  defaultBranchId,
+}: {
+  data: ProductInventoryRow[];
+  defaultBranchId: string | null;
+}) {
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({
       branch_id: false,
@@ -275,8 +350,74 @@ export function DataTable({ data }: { data: ProductInventoryRow[] }) {
     pageSize: 10,
   });
   const [globalFilter, setGlobalFilter] = React.useState("");
+  const router = useRouter();
 
-  const columns = React.useMemo(() => productColumns, []);
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [formMode, setFormMode] = React.useState<"create" | "edit">("create");
+  const [editingProduct, setEditingProduct] =
+    React.useState<ProductInventoryRow | null>(null);
+
+  const [movementOpen, setMovementOpen] = React.useState(false);
+  const [movementProduct, setMovementProduct] =
+    React.useState<ProductInventoryRow | null>(null);
+
+  const [deactivateOpen, setDeactivateOpen] = React.useState(false);
+  const [deactivateTarget, setDeactivateTarget] =
+    React.useState<ProductInventoryRow | null>(null);
+  const [deactivatePending, startDeactivate] = React.useTransition();
+
+  const openCreate = React.useCallback(() => {
+    setFormMode("create");
+    setEditingProduct(null);
+    setFormOpen(true);
+  }, []);
+
+  const openEdit = React.useCallback((row: ProductInventoryRow) => {
+    setFormMode("edit");
+    setEditingProduct(row);
+    setFormOpen(true);
+  }, []);
+
+  const openMovement = React.useCallback((row: ProductInventoryRow) => {
+    if (!row.branch_id) {
+      toast.error("This product has no branch; cannot record movement");
+      return;
+    }
+    setMovementProduct(row);
+    setMovementOpen(true);
+  }, []);
+
+  const openDeactivate = React.useCallback((row: ProductInventoryRow) => {
+    setDeactivateTarget(row);
+    setDeactivateOpen(true);
+  }, []);
+
+  const [, startActivate] = React.useTransition();
+
+  const handleActivate = React.useCallback((row: ProductInventoryRow) => {
+    startActivate(async () => {
+      const result = await setProductActive(row.id, true);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success("Product activated");
+      router.refresh();
+    });
+  }, [router]);
+
+  const columns = React.useMemo(
+    () => [
+      ...productTableBaseColumns,
+      productActionsColumn({
+        onEdit: openEdit,
+        onCreateMovement: openMovement,
+        onDeactivate: openDeactivate,
+        onActivate: handleActivate,
+      }),
+    ],
+    [openEdit, openMovement, openDeactivate, handleActivate],
+  );
 
   const table = useReactTable({
     data,
@@ -367,8 +508,84 @@ export function DataTable({ data }: { data: ProductInventoryRow[] }) {
                 ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            onClick={openCreate}
+            disabled={!defaultBranchId}
+            title={
+              !defaultBranchId
+                ? "Select a branch in the header to add products"
+                : undefined
+            }
+          >
+            <PlusIcon />
+            <span className="hidden lg:inline">Add product</span>
+          </Button>
         </div>
       </div>
+
+      <ProductFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        mode={formMode}
+        product={formMode === "edit" ? editingProduct : null}
+        defaultBranchId={defaultBranchId}
+      />
+
+      <StockMovementDialog
+        open={movementOpen}
+        onOpenChange={setMovementOpen}
+        product={movementProduct}
+      />
+
+      <AlertDialog
+        open={deactivateOpen}
+        onOpenChange={(next) => {
+          if (!deactivatePending) setDeactivateOpen(next);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate product?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deactivateTarget
+                ? `“${deactivateTarget.long_name ?? deactivateTarget.short_name ?? "This product"}” will be marked inactive.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deactivatePending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deactivatePending || !deactivateTarget}
+              onClick={(e) => {
+                e.preventDefault();
+                if (!deactivateTarget) return;
+                startDeactivate(async () => {
+                  const result = await setProductActive(
+                    deactivateTarget.id,
+                    false,
+                  );
+                  if (!result.ok) {
+                    toast.error(result.message);
+                    return;
+                  }
+                  toast.success("Product deactivated");
+                  setDeactivateOpen(false);
+                  setDeactivateTarget(null);
+                  router.refresh();
+                });
+              }}
+            >
+              {deactivatePending ? "Deactivating…" : "Deactivate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
         <div className="overflow-hidden rounded-lg border">
@@ -406,7 +623,7 @@ export function DataTable({ data }: { data: ProductInventoryRow[] }) {
               ) : (
                 <TableRow>
                   <TableCell
-                    colSpan={productColumns.length}
+                    colSpan={columns.length}
                     className="h-24 text-center"
                   >
                     No products found.

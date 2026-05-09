@@ -28,7 +28,10 @@ export default async function InventoryProductsPage() {
 
   return (
     <div className="flex flex-1 flex-col py-4">
-      <DataTable data={(rows ?? []) as ProductInventoryRow[]} />
+      <DataTable
+        data={(rows ?? []) as ProductInventoryRow[]}
+        defaultBranchId={operationsBranchId}
+      />
     </div>
   );
 }
