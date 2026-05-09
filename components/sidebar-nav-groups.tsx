@@ -3,6 +3,7 @@
 import * as React from "react";
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowRightLeft,
   Building2,
   Calendar,
   CalendarClock,
@@ -155,7 +156,20 @@ const branchOperationsNav: SidebarNavGroup = {
     { title: "Calendar", href: "/calendar", icon: Calendar },
     { title: "Patients", href: "/patients", icon: UserRound },
     { title: "Appointments", href: "/appointments", icon: CalendarClock },
-    { title: "Inventory", href: "/inventory", icon: Package },
+    {
+      kind: "collapsible",
+      title: "Inventory",
+      icon: Package,
+      sectionHref: "/inventory",
+      items: [
+        { title: "Products", href: "/inventory/products", icon: Package },
+        {
+          title: "Stock Movement",
+          href: "/inventory/stock-movements",
+          icon: ArrowRightLeft,
+        },
+      ],
+    },
     { title: "Employees", href: "/employees", icon: IdCard },
   ],
 };
