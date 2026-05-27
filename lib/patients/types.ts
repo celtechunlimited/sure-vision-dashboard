@@ -15,4 +15,7 @@ export type PatientDirectoryRow = {
   user_created_at: string | null;
   user_is_active: boolean | null;
   account_status: PatientAccountStatus;
+  branch_ids: string[];
+  branch_short_names: string[];
+  branch_long_names: string[];
 };

@@ -15,6 +15,7 @@ import {
   type ColumnDef,
   type ColumnFiltersState,
   type FilterFn,
+  type Row,
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
@@ -37,12 +38,18 @@ import { toast } from "sonner";
 import {
   activatePatientUser,
   deactivatePatientUser,
+  setPatientBranches,
 } from "@/lib/actions/patient-actions";
 import type {
   PatientAccountStatus,
   PatientDirectoryRow,
 } from "@/lib/patients/types";
+import type { EmployeeBranchOption } from "@/lib/employees/types";
 import { PatientFormDialog } from "@/components/admin/patients/patient-form-dialog";
+import {
+  BranchChips,
+  BranchMultiSelect,
+} from "@/components/branches/branch-multi-select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -134,6 +141,8 @@ const patientGlobalFilter: FilterFn<PatientDirectoryRow> = (
     v.address,
     v.user_type,
     v.account_status,
+    ...(v.branch_short_names ?? []),
+    ...(v.branch_long_names ?? []),
     statusLabel(v.account_status),
     v.user_is_active == null ? "" : v.user_is_active ? "active" : "inactive",
     formatDateTime(v.patient_created_at),
@@ -207,6 +216,49 @@ function PatientColumnHeader<TData, TValue>({
   );
 }
 
+function PatientBranchAssignCell({
+  row,
+  branches,
+}: {
+  row: Row<PatientDirectoryRow>;
+  branches: EmployeeBranchOption[];
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = React.useTransition();
+  const original = row.original;
+  const [value, setValue] = React.useState(original.branch_ids ?? []);
+
+  React.useEffect(() => {
+    setValue(original.branch_ids ?? []);
+  }, [original.branch_ids]);
+
+  return (
+    <BranchMultiSelect
+      branches={branches}
+      value={value}
+      disabled={pending}
+      placeholder="Assign branches"
+      className="w-[220px]"
+      onChange={(next) => {
+        setValue(next);
+        startTransition(async () => {
+          const res = await setPatientBranches({
+            patientId: original.patient_id,
+            branchIds: next,
+          });
+          if (!res.ok) {
+            toast.error(res.message);
+            setValue(original.branch_ids ?? []);
+            return;
+          }
+          toast.success("Branches updated");
+          router.refresh();
+        });
+      }}
+    />
+  );
+}
+
 function patientColumns(
   handlers: {
     onEdit: (row: PatientDirectoryRow) => void;
@@ -215,6 +267,8 @@ function patientColumns(
   },
   allowAccountMutations: boolean,
   showStatusColumn: boolean,
+  showBranchColumn: boolean,
+  branches: EmployeeBranchOption[],
 ) {
   const statusColumn: ColumnDef<PatientDirectoryRow> = {
     accessorKey: "account_status",
@@ -289,6 +343,27 @@ function patientColumns(
       ),
       cell: ({ row }) => formatDateTime(row.original.patient_created_at),
     },
+    ...(showBranchColumn
+      ? [
+          {
+            id: "branches",
+            accessorFn: (row: PatientDirectoryRow) =>
+              (row.branch_short_names ?? []).join(", "),
+            header: ({ column }: { column: Column<PatientDirectoryRow, unknown> }) => (
+              <PatientColumnHeader column={column} title="Branches" />
+            ),
+            cell: ({ row }: { row: Row<PatientDirectoryRow> }) =>
+              allowAccountMutations ? (
+                <PatientBranchAssignCell row={row} branches={branches} />
+              ) : (
+                <BranchChips
+                  shortNames={row.original.branch_short_names ?? []}
+                  longNames={row.original.branch_long_names ?? []}
+                />
+              ),
+          } satisfies ColumnDef<PatientDirectoryRow>,
+        ]
+      : []),
     ...(showStatusColumn ? [statusColumn] : []),
     {
       id: "actions",
@@ -342,13 +417,20 @@ function patientColumns(
 }
 
 type AccountFilterValue = "all" | PatientAccountStatus;
+type BranchFilterValue = "all" | "unassigned" | string;
 
 export function DataTable({
   data: initialData,
   variant = "admin",
+  branches = [],
+  autoAssignBranchId = null,
+  autoAssignBranchLabel = null,
 }: {
   data: PatientDirectoryRow[];
   variant?: "admin" | "branch";
+  branches?: EmployeeBranchOption[];
+  autoAssignBranchId?: string | null;
+  autoAssignBranchLabel?: string | null;
 }) {
   const allowAccountMutations = variant === "admin";
   const showStatusColumn = variant === "admin";
@@ -363,6 +445,8 @@ export function DataTable({
   });
   const [accountFilter, setAccountFilter] =
     React.useState<AccountFilterValue>("all");
+  const [branchFilter, setBranchFilter] =
+    React.useState<BranchFilterValue>("all");
   const [columnFilters, setColumnFilters] =
     React.useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = React.useState("");
@@ -418,9 +502,19 @@ export function DataTable({
   }, [initialData]);
 
   const filteredData = React.useMemo(() => {
-    if (!showStatusColumn || accountFilter === "all") return data;
-    return data.filter((r) => r.account_status === accountFilter);
-  }, [data, accountFilter, showStatusColumn]);
+    let rows = data;
+    if (showStatusColumn && accountFilter !== "all") {
+      rows = rows.filter((r) => r.account_status === accountFilter);
+    }
+    if (showStatusColumn) {
+      if (branchFilter === "unassigned") {
+        rows = rows.filter((r) => (r.branch_ids ?? []).length === 0);
+      } else if (branchFilter !== "all") {
+        rows = rows.filter((r) => (r.branch_ids ?? []).includes(branchFilter));
+      }
+    }
+    return rows;
+  }, [data, accountFilter, branchFilter, showStatusColumn]);
 
   const columns = React.useMemo(
     () =>
@@ -432,6 +526,8 @@ export function DataTable({
         },
         allowAccountMutations,
         showStatusColumn,
+        showStatusColumn,
+        branches,
       ),
     [
       openEdit,
@@ -439,6 +535,7 @@ export function DataTable({
       handleReactivate,
       allowAccountMutations,
       showStatusColumn,
+      branches,
     ],
   );
 
@@ -471,12 +568,20 @@ export function DataTable({
 
   React.useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [accountFilter, globalFilter]);
+  }, [accountFilter, branchFilter, globalFilter]);
 
   const accountFilterLabel = React.useMemo(() => {
     if (accountFilter === "all") return "All statuses";
     return statusLabel(accountFilter);
   }, [accountFilter]);
+
+  const branchFilterLabel = React.useMemo(() => {
+    if (branchFilter === "all") return "All branches";
+    if (branchFilter === "unassigned") return "Unassigned";
+    return (
+      branches.find((b) => b.id === branchFilter)?.short_name ?? "Branch"
+    );
+  }, [branchFilter, branches]);
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -488,6 +593,10 @@ export function DataTable({
         }}
         mode={formMode}
         row={formMode === "edit" ? editingRow : null}
+        variant={variant}
+        branches={branches}
+        autoAssignBranchId={autoAssignBranchId}
+        autoAssignBranchLabel={autoAssignBranchLabel}
       />
 
       {allowAccountMutations ? (
@@ -579,6 +688,36 @@ export function DataTable({
                 ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {showStatusColumn ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <FilterIcon data-icon="inline-start" />
+                  {branchFilterLabel}
+                  <ChevronDownIcon data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem onSelect={() => setBranchFilter("all")}>
+                  All branches
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setBranchFilter("unassigned")}>
+                  Unassigned
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {branches.map((b) => (
+                  <DropdownMenuItem
+                    key={b.id}
+                    onSelect={() => setBranchFilter(b.id)}
+                  >
+                    {b.long_name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
 
           {showStatusColumn ? (
             <DropdownMenu>
