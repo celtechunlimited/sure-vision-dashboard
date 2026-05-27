@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   flexRender,
@@ -300,7 +301,12 @@ function patientColumns(
         <PatientColumnHeader column={column} title="Name" />
       ),
       cell: ({ row }) => (
-        <span className="font-medium">{formatPatientName(row.original)}</span>
+        <Link
+          href={`/patients/${row.original.patient_id}`}
+          className="font-medium hover:underline"
+        >
+          {formatPatientName(row.original)}
+        </Link>
       ),
       enableHiding: false,
     },
