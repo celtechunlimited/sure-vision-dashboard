@@ -42,7 +42,10 @@ async function DashboardLayoutInner({ children }: { children: ReactNode }) {
             className="mr-2 data-vertical:h-4 data-vertical:self-center"
           />
         </header>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {children}
+          <div className="h-80"></div>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

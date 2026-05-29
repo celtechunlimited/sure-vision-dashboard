@@ -113,6 +113,8 @@ export default async function BranchDashboardPage() {
 
   const statsAppointments = dedupeAppointmentsById([...pending, ...queue]);
 
+  return null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="@container/main flex min-h-0 flex-1 flex-col gap-2">

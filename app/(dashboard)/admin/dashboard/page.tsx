@@ -62,6 +62,8 @@ export default async function AdminDashboardPage() {
   const lowStockRows = (lowRes.data ?? []) as LowStockInventoryRow[];
   const dispensedRows = (dispRes.data ?? []) as DispensedDashboardRow[];
 
+  return null;
+  
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="@container/main flex min-h-0 flex-1 flex-col gap-2">
