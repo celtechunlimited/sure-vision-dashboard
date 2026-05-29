@@ -12,6 +12,7 @@ import type {
   EmployeeBranchOption,
   EmployeeDirectoryRow,
 } from "@/lib/employees/types";
+import { BranchMultiSelect } from "@/components/branches/branch-multi-select";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,14 +33,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const UNASSIGNED_BRANCH = "__none__";
 
 type EmployeeRole = "manager" | "staff";
 
 type CreateFormState = {
   email: string;
   password: string;
-  branch_id: string;
+  branchIds: string[];
   first_name: string;
   middle_name: string;
   last_name: string;
@@ -59,7 +59,7 @@ function emptyCreateForm(): CreateFormState {
   return {
     email: "",
     password: "",
-    branch_id: UNASSIGNED_BRANCH,
+    branchIds: [],
     first_name: "",
     middle_name: "",
     last_name: "",
@@ -160,10 +160,6 @@ export function EmployeeFormDialog({
     }
 
     startTransition(async () => {
-      const branchId =
-        createForm.branch_id === UNASSIGNED_BRANCH
-          ? null
-          : createForm.branch_id;
       const result = await createEmployeeUser({
         email: createForm.email.trim(),
         password: createForm.password,
@@ -172,7 +168,7 @@ export function EmployeeFormDialog({
         last_name: createForm.last_name.trim(),
         prefix: createForm.prefix.trim(),
         employee_role: createForm.employee_role,
-        branch_id: branchId,
+        branchIds: createForm.branchIds,
       });
       if (!result.ok) {
         toast.error(result.message);
@@ -187,7 +183,7 @@ export function EmployeeFormDialog({
   const title = mode === "create" ? "Add employee" : "Edit employee";
   const description =
     mode === "create"
-      ? "Creates a sign-in for this employee via the server. Initial branch is optional."
+      ? "Creates a sign-in for this employee via the server. Branch assignments are optional."
       : "Update name, prefix, and role on the employee record.";
 
   return (
@@ -237,29 +233,16 @@ export function EmployeeFormDialog({
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="emp-branch">Initial branch</Label>
-                  <Select
-                    value={createForm.branch_id}
-                    onValueChange={(value) =>
-                      setCreateForm((s) => ({ ...s, branch_id: value }))
+                  <Label htmlFor="emp-branches">Branches</Label>
+                  <BranchMultiSelect
+                    id="emp-branches"
+                    branches={branches}
+                    value={createForm.branchIds}
+                    onChange={(branchIds) =>
+                      setCreateForm((s) => ({ ...s, branchIds }))
                     }
-                  >
-                    <SelectTrigger id="emp-branch" size="default">
-                      <SelectValue placeholder="Branch" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value={UNASSIGNED_BRANCH}>
-                          Unassigned
-                        </SelectItem>
-                        {branches.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>
-                            {b.long_name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                    placeholder="Select branches (optional)"
+                  />
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2 sm:gap-4">
                   <div className="grid gap-2">

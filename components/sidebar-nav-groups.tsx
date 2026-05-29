@@ -153,23 +153,23 @@ const branchOperationsNav: SidebarNavGroup = {
   title: "Branch Operations",
   items: [
     { title: "Dashboard", href: "/", icon: LayoutDashboard },
-    { title: "Calendar", href: "/calendar", icon: Calendar },
+    // { title: "Calendar", href: "/calendar", icon: Calendar },
     { title: "Patients", href: "/patients", icon: UserRound },
-    { title: "Appointments", href: "/appointments", icon: CalendarClock },
-    {
-      kind: "collapsible",
-      title: "Inventory",
-      icon: Package,
-      sectionHref: "/inventory",
-      items: [
-        { title: "Products", href: "/inventory/products", icon: Package },
-        {
-          title: "Stock Movement",
-          href: "/inventory/stock-movements",
-          icon: ArrowRightLeft,
-        },
-      ],
-    },
+    // { title: "Appointments", href: "/appointments", icon: CalendarClock },
+    // {
+    //   kind: "collapsible",
+    //   title: "Inventory",
+    //   icon: Package,
+    //   sectionHref: "/inventory",
+    //   items: [
+    //     { title: "Products", href: "/inventory/products", icon: Package },
+    //     {
+    //       title: "Stock Movement",
+    //       href: "/inventory/stock-movements",
+    //       icon: ArrowRightLeft,
+    //     },
+    //   ],
+    // },
     { title: "Employees", href: "/employees", icon: IdCard },
   ],
 };

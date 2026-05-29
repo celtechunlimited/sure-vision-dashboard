@@ -9,12 +9,12 @@ export type EmployeeMutationResult =
   | { ok: true }
   | { ok: false; message: string };
 
-const assignSchema = z.object({
-  userId: z.string().uuid(),
-  branchId: z.string().uuid().nullable(),
-});
-
 const employeeRoleSchema = z.enum(["manager", "staff"]);
+
+const setBranchesSchema = z.object({
+  employeeId: z.string().uuid(),
+  branchIds: z.array(z.string().uuid()),
+});
 
 async function messageFromFunctionsError(error: unknown): Promise<string> {
   if (!error || typeof error !== "object") {
@@ -33,23 +33,61 @@ async function messageFromFunctionsError(error: unknown): Promise<string> {
   return msg;
 }
 
-export async function assignEmployeeBranch(
+async function assertSuperAdmin(): Promise<EmployeeMutationResult | { ok: true }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, message: "Not signed in" };
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("user_type")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profile?.user_type !== "super_admin") {
+    return { ok: false, message: "Forbidden" };
+  }
+  return { ok: true };
+}
+
+export async function setEmployeeBranches(
   input: unknown,
 ): Promise<EmployeeMutationResult> {
-  const parsed = assignSchema.safeParse(input);
+  const parsed = setBranchesSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, message: "Invalid input" };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("users")
-    .update({ branch_id: parsed.data.branchId })
-    .eq("id", parsed.data.userId);
+  const authCheck = await assertSuperAdmin();
+  if (!authCheck.ok) return authCheck;
 
-  if (error) {
-    console.error(error);
-    return { ok: false, message: error.message };
+  const supabase = await createClient();
+  const { employeeId, branchIds } = parsed.data;
+
+  const { error: deleteError } = await supabase
+    .from("employee_branches")
+    .delete()
+    .eq("employee_id", employeeId);
+
+  if (deleteError) {
+    console.error(deleteError);
+    return { ok: false, message: deleteError.message };
+  }
+
+  if (branchIds.length > 0) {
+    const { error: insertError } = await supabase.from("employee_branches").insert(
+      branchIds.map((branch_id) => ({
+        employee_id: employeeId,
+        branch_id,
+      })),
+    );
+
+    if (insertError) {
+      console.error(insertError);
+      return { ok: false, message: insertError.message };
+    }
   }
 
   revalidatePath("/admin/users/employees");
@@ -65,7 +103,7 @@ const createEmployeeSchema = z.object({
   last_name: z.string().trim().min(1, "Last name is required"),
   employee_role: employeeRoleSchema,
   prefix: z.string().trim().min(1, "Prefix is required"),
-  branch_id: z.string().uuid().nullable().optional(),
+  branchIds: z.array(z.string().uuid()).optional(),
 });
 
 export async function createEmployeeUser(
@@ -89,7 +127,7 @@ export async function createEmployeeUser(
         last_name: parsed.data.last_name,
         employee_role: parsed.data.employee_role,
         prefix: parsed.data.prefix,
-        branch_id: parsed.data.branch_id ?? null,
+        branch_ids: parsed.data.branchIds ?? [],
       },
     },
   );

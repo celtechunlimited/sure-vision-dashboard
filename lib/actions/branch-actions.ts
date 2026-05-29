@@ -18,19 +18,16 @@ export async function getBranchesForSwitcher(): Promise<BranchesForSwitcher> {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { branches: [], userBranchId: null, canSwitchBranches: false };
+    return { branches: [], userBranchIds: [], canSwitchBranches: false };
   }
 
   const { data: profile } = await supabase
     .from("users")
-    .select("branch_id, user_type")
+    .select("user_type")
     .eq("id", user.id)
     .maybeSingle();
 
-  const userBranchId = profile?.branch_id ?? null;
-  const canSwitchBranches = profile?.user_type === "super_admin";
-
-  if (canSwitchBranches) {
+  if (profile?.user_type === "super_admin") {
     const { data: branchRows, error: branchesError } = await supabase
       .from("branches")
       .select("id, short_name, long_name")
@@ -39,36 +36,60 @@ export async function getBranchesForSwitcher(): Promise<BranchesForSwitcher> {
 
     if (branchesError) {
       console.error(branchesError);
-      return { branches: [], userBranchId, canSwitchBranches: true };
+      return { branches: [], userBranchIds: [], canSwitchBranches: false };
     }
 
+    const branches = branchRows ?? [];
     return {
-      branches: branchRows ?? [],
-      userBranchId,
-      canSwitchBranches: true,
+      branches,
+      userBranchIds: branches.map((b) => b.id),
+      canSwitchBranches: branches.length > 1,
     };
   }
 
-  if (!userBranchId) {
-    return { branches: [], userBranchId: null, canSwitchBranches: false };
+  if (profile?.user_type !== "employee") {
+    return { branches: [], userBranchIds: [], canSwitchBranches: false };
   }
 
-  const { data: assignedBranch, error: oneError } = await supabase
-    .from("branches")
-    .select("id, short_name, long_name")
-    .eq("id", userBranchId)
-    .eq("is_active", true)
+  const { data: myEmployee, error: employeeError } = await supabase
+    .from("employees")
+    .select("id")
+    .eq("user_id", user.id)
     .maybeSingle();
 
-  if (oneError) {
-    console.error(oneError);
-    return { branches: [], userBranchId, canSwitchBranches: false };
+  if (employeeError || !myEmployee?.id) {
+    if (employeeError) console.error(employeeError);
+    return { branches: [], userBranchIds: [], canSwitchBranches: false };
   }
 
+  const { data: assignments, error: assignError } = await supabase
+    .from("employee_branches")
+    .select("branch:branches!inner(id, short_name, long_name, is_active)")
+    .eq("employee_id", myEmployee.id);
+
+  if (assignError) {
+    console.error(assignError);
+    return { branches: [], userBranchIds: [], canSwitchBranches: false };
+  }
+
+  type AssignmentRow = {
+    branch:
+      | { id: string; short_name: string; long_name: string; is_active: boolean }
+      | { id: string; short_name: string; long_name: string; is_active: boolean }[]
+      | null;
+  };
+
+  const branches = ((assignments ?? []) as AssignmentRow[])
+    .flatMap((r) => (Array.isArray(r.branch) ? r.branch : r.branch ? [r.branch] : []))
+    .filter((b) => b.is_active)
+    .sort((a, b) => a.short_name.localeCompare(b.short_name))
+    .map(({ id, short_name, long_name }) => ({ id, short_name, long_name }));
+
+  const userBranchIds = branches.map((b) => b.id);
   return {
-    branches: assignedBranch ? [assignedBranch] : [],
-    userBranchId,
-    canSwitchBranches: false,
+    branches,
+    userBranchIds,
+    canSwitchBranches: branches.length > 1,
   };
 }
 

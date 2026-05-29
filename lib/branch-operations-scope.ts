@@ -20,7 +20,7 @@ export type BranchOperationsScope = {
  * else first active branch for super admins).
  */
 export async function resolveBranchOperationsScope(): Promise<BranchOperationsScope> {
-  const { branches, userBranchId } = await getBranchesForSwitcher();
+  const { branches, userBranchIds } = await getBranchesForSwitcher();
   const ids = new Set(branches.map((b) => b.id));
 
   if (branches.length === 0) {
@@ -33,7 +33,7 @@ export async function resolveBranchOperationsScope(): Promise<BranchOperationsSc
     return { branchId: cookieId, switcherBranches: branches };
   }
 
-  const branchId =
-    userBranchId && ids.has(userBranchId) ? userBranchId : branches[0]!.id;
-  return { branchId, switcherBranches: branches };
+  const defaultId =
+    userBranchIds.find((id) => ids.has(id)) ?? branches[0]!.id;
+  return { branchId: defaultId, switcherBranches: branches };
 }

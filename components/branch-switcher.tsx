@@ -49,7 +49,7 @@ export function BranchSwitcher() {
       const result = await getBranchesForSwitcher();
       if (cancelled) return;
 
-      const { branches: rows, userBranchId, canSwitchBranches: canSwitch } =
+      const { branches: rows, userBranchIds, canSwitchBranches: canSwitch } =
         result;
       setCanSwitchBranches(canSwitch);
       setBranches(rows);
@@ -59,13 +59,13 @@ export function BranchSwitcher() {
 
       let next: string | null = null;
       if (!canSwitch) {
-        next = userBranchId && ids.has(userBranchId) ? userBranchId : rows[0]?.id ?? null;
+        next =
+          userBranchIds.find((id) => ids.has(id)) ?? rows[0]?.id ?? null;
       } else if (current && ids.has(current)) {
         next = current;
-      } else if (userBranchId && ids.has(userBranchId)) {
-        next = userBranchId;
       } else {
-        next = rows[0]?.id ?? null;
+        next =
+          userBranchIds.find((id) => ids.has(id)) ?? rows[0]?.id ?? null;
       }
 
       if (next !== current) {

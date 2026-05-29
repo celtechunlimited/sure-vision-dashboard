@@ -37,14 +37,18 @@ import { toast } from "sonner";
 
 import {
   activateEmployeeUser,
-  assignEmployeeBranch,
   deactivateEmployeeUser,
+  setEmployeeBranches,
 } from "@/lib/actions/employee-actions";
 import type {
   EmployeeBranchOption,
   EmployeeDirectoryRow,
 } from "@/lib/employees/types";
 import { EmployeeFormDialog } from "@/components/admin/employees/employee-form-dialog";
+import {
+  BranchChips,
+  BranchMultiSelect,
+} from "@/components/branches/branch-multi-select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,7 +89,6 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
-const UNASSIGNED_BRANCH_VALUE = "__none__";
 
 function formatEmployeeName(row: EmployeeDirectoryRow): string {
   const parts = [
@@ -124,9 +127,9 @@ const employeeGlobalFilter: FilterFn<EmployeeDirectoryRow> = (
     v.last_name,
     v.email,
     v.employee_role,
-    v.branch_short_name,
-    v.branch_long_name,
-    v.branch_id,
+    ...(v.branch_short_names ?? []),
+    ...(v.branch_long_names ?? []),
+    ...(v.branch_ids ?? []),
     v.user_type,
     formatDate(v.employee_created_at),
     formatDate(v.user_created_at),
@@ -208,61 +211,46 @@ function BranchAssignCell({
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const original = row.original;
+  const [value, setValue] = React.useState(original.branch_ids ?? []);
+
+  React.useEffect(() => {
+    setValue(original.branch_ids ?? []);
+  }, [original.branch_ids]);
 
   return (
-    <>
-      <span className="sr-only">Branch assignment</span>
-      <Select
-        disabled={pending}
-        value={original.branch_id ?? UNASSIGNED_BRANCH_VALUE}
-        onValueChange={(value) => {
-          const nextId = value === UNASSIGNED_BRANCH_VALUE ? null : value;
-          startTransition(async () => {
-            const res = await assignEmployeeBranch({
-              userId: original.user_id,
-              branchId: nextId,
-            });
-            if (!res.ok) {
-              toast.error(res.message);
-              return;
-            }
-            toast.success("Branch updated");
-            router.refresh();
+    <BranchMultiSelect
+      branches={branches}
+      value={value}
+      disabled={pending}
+      placeholder="Assign branches"
+      className="w-[220px]"
+      onChange={(next) => {
+        setValue(next);
+        startTransition(async () => {
+          const res = await setEmployeeBranches({
+            employeeId: original.employee_id,
+            branchIds: next,
           });
-        }}
-      >
-        <SelectTrigger
-          size="sm"
-          className="w-[180px] **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate"
-          id={`${original.user_id}-branch`}
-        >
-          <SelectValue placeholder="Assign branch" />
-        </SelectTrigger>
-        <SelectContent align="end">
-          <SelectGroup>
-            <SelectItem value={UNASSIGNED_BRANCH_VALUE}>Unassigned</SelectItem>
-            {branches.map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.long_name}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-    </>
+          if (!res.ok) {
+            toast.error(res.message);
+            setValue(original.branch_ids ?? []);
+            return;
+          }
+          toast.success("Branches updated");
+          router.refresh();
+        });
+      }}
+    />
   );
 }
 
 function BranchDisplayCell({ row }: { row: Row<EmployeeDirectoryRow> }) {
   const v = row.original;
-  const label = v.branch_long_name ?? v.branch_short_name;
-  if (!label) {
-    return <span className="text-muted-foreground">—</span>;
-  }
   return (
-    <span className="max-w-[180px] truncate" title={label}>
-      {label}
-    </span>
+    <BranchChips
+      shortNames={v.branch_short_names ?? []}
+      longNames={v.branch_long_names ?? []}
+    />
   );
 }
 
@@ -342,9 +330,9 @@ function employeeColumns(config: {
     },
     {
       id: "branch",
-      accessorKey: "branch_short_name",
+      accessorFn: (row) => (row.branch_short_names ?? []).join(", "),
       header: ({ column }) => (
-        <EmployeeColumnHeader column={column} title="Branch" />
+        <EmployeeColumnHeader column={column} title="Branches" />
       ),
       cell: ({ row }) =>
         variant === "branch" ? (
@@ -507,9 +495,9 @@ export function DataTable({
     if (variant === "branch") return data;
     if (branchFilter === "all") return data;
     if (branchFilter === "unassigned") {
-      return data.filter((r) => r.branch_id == null);
+      return data.filter((r) => (r.branch_ids ?? []).length === 0);
     }
-    return data.filter((r) => r.branch_id === branchFilter);
+    return data.filter((r) => (r.branch_ids ?? []).includes(branchFilter));
   }, [data, branchFilter, variant]);
 
   const columns = React.useMemo(

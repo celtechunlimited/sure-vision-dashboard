@@ -9,6 +9,8 @@ import {
   updatePatientRecord,
 } from "@/lib/actions/patient-actions";
 import type { PatientDirectoryRow } from "@/lib/patients/types";
+import type { EmployeeBranchOption } from "@/lib/employees/types";
+import { BranchMultiSelect } from "@/components/branches/branch-multi-select";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,6 +30,7 @@ type FormState = {
   contact_number: string;
   date_of_birth: string;
   address: string;
+  branchIds: string[];
 };
 
 function emptyFormState(): FormState {
@@ -38,6 +41,7 @@ function emptyFormState(): FormState {
     contact_number: "",
     date_of_birth: "",
     address: "",
+    branchIds: [],
   };
 }
 
@@ -49,6 +53,7 @@ function rowToForm(row: PatientDirectoryRow): FormState {
     contact_number: row.contact_number?.trim() ?? "",
     date_of_birth: row.date_of_birth ?? "",
     address: row.address?.trim() ?? "",
+    branchIds: row.branch_ids ?? [],
   };
 }
 
@@ -57,6 +62,10 @@ export type PatientFormDialogProps = {
   onOpenChange: (open: boolean) => void;
   mode: "create" | "edit";
   row: PatientDirectoryRow | null;
+  variant?: "admin" | "branch";
+  branches?: EmployeeBranchOption[];
+  autoAssignBranchId?: string | null;
+  autoAssignBranchLabel?: string | null;
 };
 
 export function PatientFormDialog({
@@ -64,6 +73,10 @@ export function PatientFormDialog({
   onOpenChange,
   mode,
   row,
+  variant = "admin",
+  branches = [],
+  autoAssignBranchId = null,
+  autoAssignBranchLabel = null,
 }: PatientFormDialogProps) {
   const router = useRouter();
   const [form, setForm] = React.useState<FormState>(emptyFormState);
@@ -74,9 +87,12 @@ export function PatientFormDialog({
     if (mode === "edit" && row) {
       setForm(rowToForm(row));
     } else {
-      setForm(emptyFormState());
+      setForm({
+        ...emptyFormState(),
+        branchIds: autoAssignBranchId ? [autoAssignBranchId] : [],
+      });
     }
-  }, [open, mode, row]);
+  }, [open, mode, row, autoAssignBranchId]);
 
   function handleCancel() {
     if (pending) return;
@@ -98,7 +114,13 @@ export function PatientFormDialog({
     startTransition(async () => {
       const res =
         mode === "create"
-          ? await createPatientRecord(payload)
+          ? await createPatientRecord({
+              ...payload,
+              branchIds:
+                variant === "branch" && autoAssignBranchId
+                  ? [autoAssignBranchId]
+                  : form.branchIds,
+            })
           : row
             ? await updatePatientRecord({ patientId: row.patient_id, ...payload })
             : { ok: false as const, message: "No patient selected" };
@@ -116,7 +138,9 @@ export function PatientFormDialog({
   const title = mode === "create" ? "Add patient" : "Edit patient";
   const description =
     mode === "create"
-      ? "Create a patient record. Fields match the patients table only; no user account is created."
+      ? variant === "branch"
+        ? "Create a patient record assigned to the current branch."
+        : "Create a patient record and assign branches."
       : "Update patient profile details. Account email is shown for reference only.";
 
   return (
@@ -140,6 +164,28 @@ export function PatientFormDialog({
             <div className="grid gap-2">
               <Label>Account email</Label>
               <Input value={row.email} readOnly className="bg-muted" />
+            </div>
+          ) : null}
+          {mode === "create" && variant === "branch" && autoAssignBranchLabel ? (
+            <p className="text-sm text-muted-foreground">
+              Will be assigned to:{" "}
+              <span className="font-medium text-foreground">
+                {autoAssignBranchLabel}
+              </span>
+            </p>
+          ) : null}
+          {mode === "create" && variant === "admin" ? (
+            <div className="grid gap-2">
+              <Label htmlFor="patient-branches">Branches</Label>
+              <BranchMultiSelect
+                id="patient-branches"
+                branches={branches}
+                value={form.branchIds}
+                onChange={(branchIds) =>
+                  setForm((s) => ({ ...s, branchIds }))
+                }
+                placeholder="Select branches"
+              />
             </div>
           ) : null}
           <div className="grid gap-2">

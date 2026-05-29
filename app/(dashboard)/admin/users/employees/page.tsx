@@ -26,7 +26,16 @@ export default async function AdminUsersEmployeesPage() {
   return (
     <div className="flex flex-1 flex-col py-4">
       <DataTable
-        data={(rows ?? []) as EmployeeDirectoryRow[]}
+        data={(rows ?? []).map((r) => ({
+          ...(r as EmployeeDirectoryRow),
+          branch_ids: (r as { branch_ids?: string[] | null }).branch_ids ?? [],
+          branch_short_names:
+            (r as { branch_short_names?: string[] | null }).branch_short_names ??
+            [],
+          branch_long_names:
+            (r as { branch_long_names?: string[] | null }).branch_long_names ??
+            [],
+        }))}
         branches={branches}
       />
     </div>

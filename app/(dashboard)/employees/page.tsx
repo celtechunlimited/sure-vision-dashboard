@@ -39,7 +39,7 @@ export default async function EmployeesPage() {
     .order("email", { ascending: true });
 
   if (operationsBranchId) {
-    employeeQuery = employeeQuery.eq("branch_id", operationsBranchId);
+    employeeQuery = employeeQuery.contains("branch_ids", [operationsBranchId]);
   }
 
   const { data: rows, error } = await employeeQuery;
@@ -57,7 +57,16 @@ export default async function EmployeesPage() {
   return (
     <div className="flex flex-1 flex-col py-4">
       <DataTable
-        data={(rows ?? []) as EmployeeDirectoryRow[]}
+        data={(rows ?? []).map((r) => ({
+          ...(r as EmployeeDirectoryRow),
+          branch_ids: (r as { branch_ids?: string[] | null }).branch_ids ?? [],
+          branch_short_names:
+            (r as { branch_short_names?: string[] | null }).branch_short_names ??
+            [],
+          branch_long_names:
+            (r as { branch_long_names?: string[] | null }).branch_long_names ??
+            [],
+        }))}
         branches={branches}
         variant="branch"
         viewerUserId={user.id}

@@ -20,7 +20,7 @@ export type BranchAdminRow = {
 
 export type BranchesForSwitcher = {
   branches: BranchRow[];
-  userBranchId: string | null;
-  /** Only `super_admin` may switch branches; employees use `users.branch_id`. */
+  userBranchIds: string[];
+  /** True when the user has more than one assigned branch. */
   canSwitchBranches: boolean;
 };
