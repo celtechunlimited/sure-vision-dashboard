@@ -116,7 +116,7 @@ export function UploadDropzone({
           or drag and drop
         </div>
         <p className="text-xs text-muted-foreground">
-          PDF, images, Word, DICOM up to 50 MB
+          PDF, images, video, Word, DICOM up to 50 MB
         </p>
       </div>
     </div>

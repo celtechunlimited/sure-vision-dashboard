@@ -11,6 +11,9 @@ export const ALLOWED_MIME = [
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/dicom",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
 ] as const;
 
 export type AllowedMime = (typeof ALLOWED_MIME)[number];

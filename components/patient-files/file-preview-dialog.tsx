@@ -72,6 +72,14 @@ export function FilePreviewDialog({
                 title={file.file_name}
                 className="h-[70vh] w-full"
               />
+            ) : file.mime_type.startsWith("video/") ? (
+              <video
+                src={signedUrl}
+                controls
+                className="mx-auto max-h-[70vh] w-full"
+              >
+                <track kind="captions" />
+              </video>
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img
