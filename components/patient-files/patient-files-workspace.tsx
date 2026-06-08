@@ -201,6 +201,8 @@ export function PatientFilesWorkspace({
           }}
           fileId={replaceFile.id}
           fileName={replaceFile.file_name}
+          storagePath={replaceFile.storage_path}
+          patientId={patientId}
         />
       ) : null}
 
