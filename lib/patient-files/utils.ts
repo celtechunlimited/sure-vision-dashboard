@@ -168,5 +168,9 @@ export function formatEmployeeDisplayName(employee: {
 }
 
 export function isPreviewableMime(mime: string): boolean {
-  return mime.startsWith("image/") || mime === "application/pdf";
+  return (
+    mime.startsWith("image/") ||
+    mime.startsWith("video/") ||
+    mime === "application/pdf"
+  );
 }
