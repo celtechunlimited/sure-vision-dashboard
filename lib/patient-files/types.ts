@@ -98,3 +98,21 @@ export type PatientDetailPatient = {
   created_at: string;
   branch_short_names: string[];
 };
+
+export type PatientFileUploadMetadata = {
+  patientId: string;
+  folderId: string | null;
+  fileId: string;
+  storagePath: string;
+  originalName: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+};
+
+export type PatientFileReplaceMetadata = {
+  fileId: string;
+  mimeType: string;
+  fileSize: number;
+  originalName: string;
+};

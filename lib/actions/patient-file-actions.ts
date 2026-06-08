@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -9,7 +8,9 @@ import {
   MAX_FILE_SIZE,
   PATIENT_FILES_BUCKET,
   type PatientFileActionType,
+  type PatientFileReplaceMetadata,
   type PatientFileTargetType,
+  type PatientFileUploadMetadata,
   type PatientFolderRow,
 } from "@/lib/patient-files/types";
 import {
@@ -62,6 +63,24 @@ const moveFileSchema = z.object({
 const signedUrlSchema = z.object({
   fileId: uuid,
   disposition: z.enum(["inline", "attachment"]),
+});
+
+const recordUploadSchema = z.object({
+  patientId: uuid,
+  folderId: uuid.nullable(),
+  fileId: uuid,
+  storagePath: z.string().trim().min(1),
+  originalName: fileName,
+  fileName: fileName,
+  mimeType: z.string().trim().min(1),
+  fileSize: z.number().int().positive().max(MAX_FILE_SIZE),
+});
+
+const recordReplaceSchema = z.object({
+  fileId: uuid,
+  mimeType: z.string().trim().min(1),
+  fileSize: z.number().int().positive().max(MAX_FILE_SIZE),
+  originalName: fileName,
 });
 
 function revalidatePatientPaths(patientId: string) {
@@ -455,91 +474,71 @@ export async function restorePatientFolder(input: {
   return { ok: true };
 }
 
-export async function uploadPatientFile(
-  formData: FormData,
+export async function recordPatientFileUpload(
+  input: PatientFileUploadMetadata,
 ): Promise<PatientFileMutationResult> {
+  const parsed = recordUploadSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
   const auth = await requireStaffUser();
   if (!auth.ok) return auth;
 
-  const patientId = String(formData.get("patientId") ?? "");
-  const folderIdRaw = formData.get("folderId");
-  const folderId =
-    folderIdRaw == null || folderIdRaw === "" ? null : String(folderIdRaw);
-  const file = formData.get("file");
-
-  const patientParse = uuid.safeParse(patientId);
-  if (!patientParse.success) {
-    return { ok: false, message: "Invalid patient." };
-  }
-  if (folderId) {
-    const folderParse = uuid.safeParse(folderId);
-    if (!folderParse.success) {
-      return { ok: false, message: "Invalid folder." };
-    }
-  }
-  if (!(file instanceof File)) {
-    return { ok: false, message: "No file provided." };
-  }
-  if (file.size <= 0 || file.size > MAX_FILE_SIZE) {
-    return { ok: false, message: "File exceeds the 50 MB limit." };
-  }
-  if (!isAllowedMime(file.type)) {
+  if (!isAllowedMime(parsed.data.mimeType)) {
     return { ok: false, message: "File type is not allowed." };
   }
 
-  const parentCheck = await validateFolderParent(patientParse.data, folderId);
-  if (!parentCheck.ok) return parentCheck;
-
-  const fileId = randomUUID();
-  const ext = getFileExtension(file.name);
-  const storagePath = buildStoragePath(patientParse.data, fileId, ext);
-
-  const supabase = await createClient();
-  const { error: uploadError } = await supabase.storage
-    .from(PATIENT_FILES_BUCKET)
-    .upload(storagePath, file, {
-      contentType: file.type,
-      upsert: false,
-    });
-
-  if (uploadError) {
-    return { ok: false, message: uploadError.message };
+  const expectedPath = buildStoragePath(
+    parsed.data.patientId,
+    parsed.data.fileId,
+    getFileExtension(parsed.data.originalName),
+  );
+  if (parsed.data.storagePath !== expectedPath) {
+    return { ok: false, message: "Invalid storage path." };
   }
 
+  const parentCheck = await validateFolderParent(
+    parsed.data.patientId,
+    parsed.data.folderId,
+  );
+  if (!parentCheck.ok) return parentCheck;
+
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("patient_files")
     .insert({
-      id: fileId,
-      patient_id: patientParse.data,
-      folder_id: folderId,
-      storage_path: storagePath,
-      original_name: file.name,
-      file_name: file.name,
-      mime_type: file.type,
-      file_size: file.size,
+      id: parsed.data.fileId,
+      patient_id: parsed.data.patientId,
+      folder_id: parsed.data.folderId,
+      storage_path: parsed.data.storagePath,
+      original_name: parsed.data.originalName,
+      file_name: parsed.data.fileName,
+      mime_type: parsed.data.mimeType,
+      file_size: parsed.data.fileSize,
       uploaded_by: auth.userId,
     })
     .select("id")
     .single();
 
   if (error) {
-    await supabase.storage.from(PATIENT_FILES_BUCKET).remove([storagePath]);
+    await supabase.storage.from(PATIENT_FILES_BUCKET).remove([parsed.data.storagePath]);
     return { ok: false, message: error.message };
   }
 
   await logActivity({
-    patientId: patientParse.data,
+    patientId: parsed.data.patientId,
     actionType: "FILE_UPLOAD",
     targetType: "file",
     targetId: data.id,
     performedBy: auth.userId,
     metadata: {
-      target_name: file.name,
-      folder_id: folderId,
+      target_name: parsed.data.fileName,
+      folder_id: parsed.data.folderId,
     },
   });
 
-  revalidatePatientPaths(patientParse.data);
+  revalidatePatientPaths(parsed.data.patientId);
   return { ok: true, fileId: data.id };
 }
 
@@ -665,25 +664,18 @@ export async function movePatientFile(input: {
   return { ok: true };
 }
 
-export async function replacePatientFile(
-  formData: FormData,
+export async function recordPatientFileReplacement(
+  input: PatientFileReplaceMetadata,
 ): Promise<PatientFileMutationResult> {
+  const parsed = recordReplaceSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
   const auth = await requireStaffUser();
   if (!auth.ok) return auth;
 
-  const fileId = String(formData.get("fileId") ?? "");
-  const file = formData.get("file");
-  const fileParse = uuid.safeParse(fileId);
-  if (!fileParse.success) {
-    return { ok: false, message: "Invalid file." };
-  }
-  if (!(file instanceof File)) {
-    return { ok: false, message: "No file provided." };
-  }
-  if (file.size <= 0 || file.size > MAX_FILE_SIZE) {
-    return { ok: false, message: "File exceeds the 50 MB limit." };
-  }
-  if (!isAllowedMime(file.type)) {
+  if (!isAllowedMime(parsed.data.mimeType)) {
     return { ok: false, message: "File type is not allowed." };
   }
 
@@ -691,7 +683,7 @@ export async function replacePatientFile(
   const { data: existing, error: fetchError } = await supabase
     .from("patient_files")
     .select("id, patient_id, storage_path, file_name, mime_type, file_size, deleted_at")
-    .eq("id", fileParse.data)
+    .eq("id", parsed.data.fileId)
     .maybeSingle();
 
   if (fetchError || !existing) {
@@ -701,23 +693,12 @@ export async function replacePatientFile(
     return { ok: false, message: "Cannot replace a deleted file." };
   }
 
-  const { error: uploadError } = await supabase.storage
-    .from(PATIENT_FILES_BUCKET)
-    .upload(existing.storage_path, file, {
-      contentType: file.type,
-      upsert: true,
-    });
-
-  if (uploadError) {
-    return { ok: false, message: uploadError.message };
-  }
-
   const { error } = await supabase
     .from("patient_files")
     .update({
-      mime_type: file.type,
-      file_size: file.size,
-      original_name: file.name,
+      mime_type: parsed.data.mimeType,
+      file_size: parsed.data.fileSize,
+      original_name: parsed.data.originalName,
       updated_by: auth.userId,
     })
     .eq("id", existing.id);
@@ -734,7 +715,7 @@ export async function replacePatientFile(
     performedBy: auth.userId,
     metadata: {
       previous_value: existing.file_name,
-      new_value: file.name,
+      new_value: parsed.data.originalName,
       target_name: existing.file_name,
     },
   });
