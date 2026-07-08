@@ -39,8 +39,15 @@ import { toast } from "sonner";
 import {
   activatePatientUser,
   deactivatePatientUser,
+  permanentlyDeletePatientRecord,
+  restorePatientRecord,
   setPatientBranches,
+  softDeletePatientRecord,
 } from "@/lib/actions/patient-actions";
+import {
+  formatPatientName,
+  patientNameSortKey,
+} from "@/lib/patients/format-name";
 import type {
   PatientAccountStatus,
   PatientDirectoryRow,
@@ -90,13 +97,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-
-function formatPatientName(row: PatientDirectoryRow): string {
-  const parts = [row.first_name, row.middle_name, row.last_name].filter(
-    (p): p is string => Boolean(p && String(p).trim()),
-  );
-  return parts.length ? parts.join(" ") : "—";
-}
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso);
@@ -265,11 +265,16 @@ function patientColumns(
     onEdit: (row: PatientDirectoryRow) => void;
     onDeactivate: (row: PatientDirectoryRow) => void;
     onReactivate: (row: PatientDirectoryRow) => void;
+    onDelete: (row: PatientDirectoryRow) => void;
+    onRestore: (row: PatientDirectoryRow) => void;
+    onPermanentDelete: (row: PatientDirectoryRow) => void;
   },
   allowAccountMutations: boolean,
   showStatusColumn: boolean,
   showBranchColumn: boolean,
   branches: EmployeeBranchOption[],
+  viewingDeleted: boolean,
+  isSuperAdmin: boolean,
 ) {
   const statusColumn: ColumnDef<PatientDirectoryRow> = {
     accessorKey: "account_status",
@@ -296,7 +301,7 @@ function patientColumns(
   const cols: ColumnDef<PatientDirectoryRow>[] = [
     {
       id: "name",
-      accessorFn: (row) => formatPatientName(row),
+      accessorFn: (row) => patientNameSortKey(row),
       header: ({ column }) => (
         <PatientColumnHeader column={column} title="Name" />
       ),
@@ -391,28 +396,56 @@ function patientColumns(
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onSelect={() => handlers.onEdit(r)}>
-                Edit
-              </DropdownMenuItem>
-              {allowAccountMutations && hasAccount ? (
+              {!viewingDeleted ? (
                 <>
+                  <DropdownMenuItem onSelect={() => handlers.onEdit(r)}>
+                    Edit
+                  </DropdownMenuItem>
+                  {allowAccountMutations && hasAccount ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      {r.account_status === "active" ? (
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => handlers.onDeactivate(r)}
+                        >
+                          Deactivate
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem
+                          onSelect={() => handlers.onReactivate(r)}
+                        >
+                          Reactivate
+                        </DropdownMenuItem>
+                      )}
+                    </>
+                  ) : null}
                   <DropdownMenuSeparator />
-                  {r.account_status === "active" ? (
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={() => handlers.onDeactivate(r)}
-                    >
-                      Deactivate
-                    </DropdownMenuItem>
-                  ) : (
-                    <DropdownMenuItem
-                      onSelect={() => handlers.onReactivate(r)}
-                    >
-                      Reactivate
-                    </DropdownMenuItem>
-                  )}
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => handlers.onDelete(r)}
+                  >
+                    Delete
+                  </DropdownMenuItem>
                 </>
-              ) : null}
+              ) : (
+                <>
+                  {isSuperAdmin ? (
+                    <>
+                      <DropdownMenuItem onSelect={() => handlers.onRestore(r)}>
+                        Restore
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={() => handlers.onPermanentDelete(r)}
+                      >
+                        Delete permanently
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         );
@@ -427,20 +460,25 @@ type BranchFilterValue = "all" | "unassigned" | string;
 
 export function DataTable({
   data: initialData,
+  deletedData = [],
   variant = "admin",
   branches = [],
   autoAssignBranchId = null,
   autoAssignBranchLabel = null,
+  isSuperAdmin = false,
 }: {
   data: PatientDirectoryRow[];
+  deletedData?: PatientDirectoryRow[];
   variant?: "admin" | "branch";
   branches?: EmployeeBranchOption[];
   autoAssignBranchId?: string | null;
   autoAssignBranchLabel?: string | null;
+  isSuperAdmin?: boolean;
 }) {
   const allowAccountMutations = variant === "admin";
   const showStatusColumn = variant === "admin";
   const router = useRouter();
+  const [showDeleted, setShowDeleted] = React.useState(false);
   const [data, setData] = React.useState(initialData);
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({});
@@ -486,6 +524,45 @@ export function DataTable({
 
   const [, startReactivate] = React.useTransition();
 
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deleteTarget, setDeleteTarget] =
+    React.useState<PatientDirectoryRow | null>(null);
+  const [deletePending, startDelete] = React.useTransition();
+
+  const [permanentDeleteOpen, setPermanentDeleteOpen] = React.useState(false);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] =
+    React.useState<PatientDirectoryRow | null>(null);
+  const [permanentDeletePending, startPermanentDelete] = React.useTransition();
+
+  const [, startRestore] = React.useTransition();
+
+  const openDelete = React.useCallback((row: PatientDirectoryRow) => {
+    setDeleteTarget(row);
+    setDeleteOpen(true);
+  }, []);
+
+  const openPermanentDelete = React.useCallback((row: PatientDirectoryRow) => {
+    setPermanentDeleteTarget(row);
+    setPermanentDeleteOpen(true);
+  }, []);
+
+  const handleRestore = React.useCallback(
+    (row: PatientDirectoryRow) => {
+      startRestore(async () => {
+        const result = await restorePatientRecord({
+          patientId: row.patient_id,
+        });
+        if (!result.ok) {
+          toast.error(result.message);
+          return;
+        }
+        toast.success("Patient restored");
+        router.refresh();
+      });
+    },
+    [router],
+  );
+
   const handleReactivate = React.useCallback(
     (row: PatientDirectoryRow) => {
       const userId = row.user_id;
@@ -504,15 +581,15 @@ export function DataTable({
   );
 
   React.useEffect(() => {
-    setData(initialData);
-  }, [initialData]);
+    setData(showDeleted ? deletedData : initialData);
+  }, [initialData, deletedData, showDeleted]);
 
   const filteredData = React.useMemo(() => {
     let rows = data;
-    if (showStatusColumn && accountFilter !== "all") {
+    if (!showDeleted && showStatusColumn && accountFilter !== "all") {
       rows = rows.filter((r) => r.account_status === accountFilter);
     }
-    if (showStatusColumn) {
+    if (!showDeleted && showStatusColumn) {
       if (branchFilter === "unassigned") {
         rows = rows.filter((r) => (r.branch_ids ?? []).length === 0);
       } else if (branchFilter !== "all") {
@@ -520,7 +597,7 @@ export function DataTable({
       }
     }
     return rows;
-  }, [data, accountFilter, branchFilter, showStatusColumn]);
+  }, [data, accountFilter, branchFilter, showStatusColumn, showDeleted]);
 
   const columns = React.useMemo(
     () =>
@@ -529,19 +606,29 @@ export function DataTable({
           onEdit: openEdit,
           onDeactivate: openDeactivate,
           onReactivate: handleReactivate,
+          onDelete: openDelete,
+          onRestore: handleRestore,
+          onPermanentDelete: openPermanentDelete,
         },
         allowAccountMutations,
         showStatusColumn,
         showStatusColumn,
         branches,
+        showDeleted,
+        isSuperAdmin,
       ),
     [
       openEdit,
       openDeactivate,
       handleReactivate,
+      openDelete,
+      handleRestore,
+      openPermanentDelete,
       allowAccountMutations,
       showStatusColumn,
       branches,
+      showDeleted,
+      isSuperAdmin,
     ],
   );
 
@@ -656,6 +743,98 @@ export function DataTable({
         </AlertDialog>
       ) : null}
 
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(next) => {
+          if (!deletePending) setDeleteOpen(next);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete patient?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `"${formatPatientName(deleteTarget)}" will be removed from patient lists. A super admin can restore or permanently delete the record later.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletePending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deletePending || !deleteTarget}
+              onClick={(e) => {
+                e.preventDefault();
+                if (!deleteTarget) return;
+                startDelete(async () => {
+                  const result = await softDeletePatientRecord({
+                    patientId: deleteTarget.patient_id,
+                  });
+                  if (!result.ok) {
+                    toast.error(result.message);
+                    return;
+                  }
+                  toast.success("Patient deleted");
+                  setDeleteOpen(false);
+                  setDeleteTarget(null);
+                  router.refresh();
+                });
+              }}
+            >
+              {deletePending ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {isSuperAdmin ? (
+        <AlertDialog
+          open={permanentDeleteOpen}
+          onOpenChange={(next) => {
+            if (!permanentDeletePending) setPermanentDeleteOpen(next);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Permanently delete patient?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {permanentDeleteTarget
+                  ? `"${formatPatientName(permanentDeleteTarget)}" and all associated files, folders, and activity logs will be permanently removed. Appointments will keep their snapshot data but lose the patient link. This cannot be undone.`
+                  : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={permanentDeletePending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={permanentDeletePending || !permanentDeleteTarget}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!permanentDeleteTarget) return;
+                  startPermanentDelete(async () => {
+                    const result = await permanentlyDeletePatientRecord({
+                      patientId: permanentDeleteTarget.patient_id,
+                    });
+                    if (!result.ok) {
+                      toast.error(result.message);
+                      return;
+                    }
+                    toast.success("Patient permanently deleted");
+                    setPermanentDeleteOpen(false);
+                    setPermanentDeleteTarget(null);
+                    router.refresh();
+                  });
+                }}
+              >
+                {permanentDeletePending ? "Deleting…" : "Delete permanently"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+
       <div className="flex flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
         <Input
           placeholder="Filter patients…"
@@ -753,10 +932,22 @@ export function DataTable({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
-            <PlusIcon />
-            <span className="hidden lg:inline">Add patient</span>
-          </Button>
+          {isSuperAdmin ? (
+            <Button
+              variant={showDeleted ? "default" : "outline"}
+              size="sm"
+              type="button"
+              onClick={() => setShowDeleted((v) => !v)}
+            >
+              {showDeleted ? "Active patients" : "Deleted patients"}
+            </Button>
+          ) : null}
+          {!showDeleted ? (
+            <Button variant="outline" size="sm" type="button" onClick={openCreate}>
+              <PlusIcon />
+              <span className="hidden lg:inline">Add patient</span>
+            </Button>
+          ) : null}
         </div>
       </div>
 

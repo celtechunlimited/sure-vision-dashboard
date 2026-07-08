@@ -83,6 +83,17 @@ const recordReplaceSchema = z.object({
   originalName: fileName,
 });
 
+const reorderItemsSchema = z.object({
+  patientId: uuid,
+  folderId: uuid.nullable(),
+  items: z.array(
+    z.object({
+      id: uuid,
+      kind: z.enum(["folder", "file"]),
+    }),
+  ),
+});
+
 function revalidatePatientPaths(patientId: string) {
   revalidatePath(`/patients/${patientId}`);
   revalidatePath("/patients");
@@ -112,6 +123,58 @@ async function requireStaffUser(): Promise<StaffAuthResult> {
   }
 
   return { ok: true, userId: user.id };
+}
+
+async function requireSuperAdmin(): Promise<
+  PatientFileMutationResult | { ok: true; userId: string }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, message: "Not authenticated." };
+  }
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("user_type")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profile?.user_type !== "super_admin") {
+    return { ok: false, message: "Forbidden." };
+  }
+
+  return { ok: true, userId: user.id };
+}
+
+async function collectFolderTreeIds(
+  patientId: string,
+  rootFolderId: string,
+): Promise<string[]> {
+  const supabase = await createClient();
+  const { data: folders } = await supabase
+    .from("patient_folders")
+    .select("id, parent_folder_id")
+    .eq("patient_id", patientId);
+
+  const ids = new Set<string>([rootFolderId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const folder of folders ?? []) {
+      if (
+        folder.parent_folder_id &&
+        ids.has(folder.parent_folder_id) &&
+        !ids.has(folder.id)
+      ) {
+        ids.add(folder.id);
+        changed = true;
+      }
+    }
+  }
+  return Array.from(ids);
 }
 
 async function logActivity(input: {
@@ -834,6 +897,176 @@ export async function restorePatientFile(input: {
   });
 
   revalidatePatientPaths(file.patient_id);
+  return { ok: true };
+}
+
+export async function permanentlyDeletePatientFile(input: {
+  fileId: string;
+}): Promise<PatientFileMutationResult> {
+  const parsed = z.object({ fileId: uuid }).safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: "Invalid file." };
+  }
+
+  const auth = await requireSuperAdmin();
+  if (!auth.ok) return auth;
+
+  const supabase = await createClient();
+  const { data: file, error: fetchError } = await supabase
+    .from("patient_files")
+    .select("id, patient_id, storage_path, file_name, deleted_at")
+    .eq("id", parsed.data.fileId)
+    .maybeSingle();
+
+  if (fetchError || !file) {
+    return { ok: false, message: "File not found." };
+  }
+  if (!file.deleted_at) {
+    return { ok: false, message: "Archive the file before permanently deleting it." };
+  }
+
+  const { error: storageError } = await supabase.storage
+    .from(PATIENT_FILES_BUCKET)
+    .remove([file.storage_path]);
+
+  if (storageError) {
+    return { ok: false, message: storageError.message };
+  }
+
+  const { error } = await supabase
+    .from("patient_files")
+    .delete()
+    .eq("id", parsed.data.fileId);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePatientPaths(file.patient_id);
+  return { ok: true };
+}
+
+export async function permanentlyDeletePatientFolder(input: {
+  folderId: string;
+}): Promise<PatientFileMutationResult> {
+  const parsed = folderIdSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: "Invalid folder." };
+  }
+
+  const auth = await requireSuperAdmin();
+  if (!auth.ok) return auth;
+
+  const supabase = await createClient();
+  const { data: folder, error: fetchError } = await supabase
+    .from("patient_folders")
+    .select("id, patient_id, name, deleted_at")
+    .eq("id", parsed.data.folderId)
+    .maybeSingle();
+
+  if (fetchError || !folder) {
+    return { ok: false, message: "Folder not found." };
+  }
+  if (!folder.deleted_at) {
+    return {
+      ok: false,
+      message: "Archive the folder before permanently deleting it.",
+    };
+  }
+
+  const folderIds = await collectFolderTreeIds(folder.patient_id, folder.id);
+  const { data: files, error: filesError } = await supabase
+    .from("patient_files")
+    .select("storage_path")
+    .eq("patient_id", folder.patient_id)
+    .in("folder_id", folderIds);
+
+  if (filesError) {
+    return { ok: false, message: filesError.message };
+  }
+
+  const storagePaths = (files ?? [])
+    .map((row) => row.storage_path)
+    .filter(Boolean);
+
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await supabase.storage
+      .from(PATIENT_FILES_BUCKET)
+      .remove(storagePaths);
+
+    if (storageError) {
+      return { ok: false, message: storageError.message };
+    }
+  }
+
+  const { error } = await supabase
+    .from("patient_folders")
+    .delete()
+    .eq("id", folder.id);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePatientPaths(folder.patient_id);
+  return { ok: true };
+}
+
+export async function reorderPatientItems(input: {
+  patientId: string;
+  folderId: string | null;
+  items: Array<{ id: string; kind: "folder" | "file" }>;
+}): Promise<PatientFileMutationResult> {
+  const parsed = reorderItemsSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: "Invalid reorder request." };
+  }
+
+  const auth = await requireStaffUser();
+  if (!auth.ok) return auth;
+
+  const supabase = await createClient();
+  const { patientId, folderId, items } = parsed.data;
+
+  for (const [index, item] of items.entries()) {
+    if (item.kind === "folder") {
+      let query = supabase
+        .from("patient_folders")
+        .update({ sort_order: index, updated_by: auth.userId })
+        .eq("id", item.id)
+        .eq("patient_id", patientId);
+
+      query =
+        folderId === null
+          ? query.is("parent_folder_id", null)
+          : query.eq("parent_folder_id", folderId);
+
+      const { error } = await query;
+
+      if (error) {
+        return { ok: false, message: error.message };
+      }
+    } else {
+      let query = supabase
+        .from("patient_files")
+        .update({ sort_order: index, updated_by: auth.userId })
+        .eq("id", item.id)
+        .eq("patient_id", patientId);
+
+      query =
+        folderId === null
+          ? query.is("folder_id", null)
+          : query.eq("folder_id", folderId);
+
+      const { error } = await query;
+
+      if (error) {
+        return { ok: false, message: error.message };
+      }
+    }
+  }
+
+  revalidatePatientPaths(patientId);
   return { ok: true };
 }
 

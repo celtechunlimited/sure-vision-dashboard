@@ -2,16 +2,14 @@ import type {
   PatientFileRow,
   PatientFolderRow,
 } from "@/lib/patient-files/types";
+import { formatPatientName } from "@/lib/patients/format-name";
 
 export function formatPatientDisplayName(patient: {
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
 }): string {
-  const parts = [patient.first_name, patient.middle_name, patient.last_name].filter(
-    (p): p is string => Boolean(p && String(p).trim()),
-  );
-  return parts.length ? parts.join(" ") : "Patient";
+  return formatPatientName(patient, "Patient");
 }
 
 export function formatFileSize(bytes: number): string {

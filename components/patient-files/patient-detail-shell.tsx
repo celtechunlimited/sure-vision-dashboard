@@ -28,6 +28,7 @@ type PatientDetailShellProps = {
   files: PatientFileRow[];
   activities: PatientFileActivityRow[];
   performerNames: Record<string, string>;
+  isSuperAdmin?: boolean;
 };
 
 function formatDateOnly(iso: string | null): string {
@@ -43,6 +44,7 @@ export function PatientDetailShell({
   files,
   activities,
   performerNames,
+  isSuperAdmin = false,
 }: PatientDetailShellProps) {
   const displayName = formatPatientDisplayName(patient);
 
@@ -96,6 +98,31 @@ export function PatientDetailShell({
                 <p className="text-sm text-muted-foreground">Address</p>
                 <p className="font-medium">{patient.address ?? "—"}</p>
               </div>
+              {patient.is_minor ? (
+                <>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm font-medium">Guardian information</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Guardian name</p>
+                    <p className="font-medium">{patient.guardian_name ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Relationship</p>
+                    <p className="font-medium">
+                      {patient.guardian_relationship ?? "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Mobile</p>
+                    <p className="font-medium">{patient.guardian_mobile ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Email</p>
+                    <p className="font-medium">{patient.guardian_email ?? "—"}</p>
+                  </div>
+                </>
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>
@@ -107,6 +134,7 @@ export function PatientDetailShell({
             files={files}
             activities={activities}
             performerNames={performerNames}
+            isSuperAdmin={isSuperAdmin}
           />
         </TabsContent>
 

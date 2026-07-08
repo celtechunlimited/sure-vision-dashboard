@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
+  ArchiveIcon,
   DownloadIcon,
   EllipsisVerticalIcon,
   EyeIcon,
@@ -16,6 +17,8 @@ import { toast } from "sonner";
 
 import {
   getPatientFileSignedUrl,
+  permanentlyDeletePatientFile,
+  permanentlyDeletePatientFolder,
   restorePatientFile,
   restorePatientFolder,
   softDeletePatientFile,
@@ -38,7 +41,8 @@ type FileRowActionsProps = {
   targetType: "folder" | "file";
   folder?: PatientFolderRow;
   file?: PatientFileRow;
-  trash?: boolean;
+  archive?: boolean;
+  isSuperAdmin?: boolean;
   onRename: () => void;
   onMove: () => void;
   onReplace?: () => void;
@@ -49,7 +53,8 @@ export function FileRowActions({
   targetType,
   folder,
   file,
-  trash = false,
+  archive = false,
+  isSuperAdmin = false,
   onRename,
   onMove,
   onReplace,
@@ -58,7 +63,7 @@ export function FileRowActions({
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
 
-  function handleDelete() {
+  function handleArchive() {
     startTransition(async () => {
       const result =
         targetType === "folder" && folder
@@ -70,7 +75,7 @@ export function FileRowActions({
         toast.error(result.message);
         return;
       }
-      toast.success("Moved to trash");
+      toast.success("Moved to archive");
       router.refresh();
     });
   }
@@ -88,6 +93,23 @@ export function FileRowActions({
         return;
       }
       toast.success("Restored");
+      router.refresh();
+    });
+  }
+
+  function handlePermanentDelete() {
+    startTransition(async () => {
+      const result =
+        targetType === "folder" && folder
+          ? await permanentlyDeletePatientFolder({ folderId: folder.id })
+          : file
+            ? await permanentlyDeletePatientFile({ fileId: file.id })
+            : { ok: false as const, message: "Invalid target." };
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success("Permanently deleted");
       router.refresh();
     });
   }
@@ -115,11 +137,22 @@ export function FileRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {trash ? (
-          <DropdownMenuItem onClick={handleRestore}>
-            <Undo2Icon className="size-4" />
-            Restore
-          </DropdownMenuItem>
+        {archive ? (
+          <>
+            <DropdownMenuItem onClick={handleRestore}>
+              <Undo2Icon className="size-4" />
+              Restore
+            </DropdownMenuItem>
+            {isSuperAdmin ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={handlePermanentDelete}>
+                  <Trash2Icon className="size-4" />
+                  Delete permanently
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </>
         ) : (
           <>
             {targetType === "file" && onPreview ? (
@@ -149,9 +182,9 @@ export function FileRowActions({
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={handleDelete}>
-              <Trash2Icon className="size-4" />
-              Delete
+            <DropdownMenuItem variant="destructive" onClick={handleArchive}>
+              <ArchiveIcon className="size-4" />
+              Archive
             </DropdownMenuItem>
           </>
         )}

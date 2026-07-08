@@ -39,6 +39,7 @@ export type PatientFolderRow = {
   patient_id: string;
   parent_folder_id: string | null;
   name: string;
+  sort_order: number | null;
   created_by: string;
   updated_by: string | null;
   deleted_by: string | null;
@@ -56,6 +57,7 @@ export type PatientFileRow = {
   file_name: string;
   mime_type: string;
   file_size: number;
+  sort_order: number | null;
   uploaded_by: string;
   updated_by: string | null;
   deleted_by: string | null;
@@ -95,6 +97,11 @@ export type PatientDetailPatient = {
   contact_number: string | null;
   date_of_birth: string | null;
   address: string | null;
+  is_minor: boolean;
+  guardian_name: string | null;
+  guardian_mobile: string | null;
+  guardian_email: string | null;
+  guardian_relationship: string | null;
   created_at: string;
   branch_short_names: string[];
 };

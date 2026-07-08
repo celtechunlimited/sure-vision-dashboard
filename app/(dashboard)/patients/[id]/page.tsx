@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { PatientDetailShell } from "@/components/patient-files/patient-detail-shell";
+import { getSessionUserType } from "@/lib/actions/auth-actions";
 import type {
   PatientDetailPatient,
   PatientFileActivityMetadata,
@@ -33,6 +34,9 @@ export default async function PatientDetailPage({ params }: PageProps) {
     redirect("/auth/login");
   }
 
+  const userType = await getSessionUserType();
+  const isSuperAdmin = userType === "super_admin";
+
   const { data: patientRow, error: patientError } = await supabase
     .from("patients")
     .select(
@@ -44,6 +48,11 @@ export default async function PatientDetailPage({ params }: PageProps) {
       contact_number,
       date_of_birth,
       address,
+      is_minor,
+      guardian_name,
+      guardian_mobile,
+      guardian_email,
+      guardian_relationship,
       created_at,
       patient_branches (
         branches ( short_name )
@@ -51,6 +60,7 @@ export default async function PatientDetailPage({ params }: PageProps) {
     `,
     )
     .eq("id", id)
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (patientError || !patientRow) {
@@ -79,6 +89,11 @@ export default async function PatientDetailPage({ params }: PageProps) {
     contact_number: patientRow.contact_number,
     date_of_birth: patientRow.date_of_birth,
     address: patientRow.address,
+    is_minor: patientRow.is_minor ?? false,
+    guardian_name: patientRow.guardian_name,
+    guardian_mobile: patientRow.guardian_mobile,
+    guardian_email: patientRow.guardian_email,
+    guardian_relationship: patientRow.guardian_relationship,
     created_at: patientRow.created_at,
     branch_short_names: branchShortNames,
   };
@@ -89,11 +104,13 @@ export default async function PatientDetailPage({ params }: PageProps) {
         .from("patient_folders")
         .select("*")
         .eq("patient_id", id)
+        .order("sort_order", { ascending: true, nullsFirst: false })
         .order("name", { ascending: true }),
       supabase
         .from("patient_files")
         .select("*")
         .eq("patient_id", id)
+        .order("sort_order", { ascending: true, nullsFirst: false })
         .order("file_name", { ascending: true }),
       supabase
         .from("patient_file_activity_logs")
@@ -150,6 +167,7 @@ export default async function PatientDetailPage({ params }: PageProps) {
         normalizeActivity(row as Record<string, unknown>),
       )}
       performerNames={performerNames}
+      isSuperAdmin={isSuperAdmin}
     />
   );
 }
