@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DataTable } from "@/components/admin/patients/data-table";
+import { getSessionUserType } from "@/lib/actions/auth-actions";
 import { resolveBranchOperationsScope } from "@/lib/branch-operations-scope";
 import type { PatientAccountStatus, PatientDirectoryRow } from "@/lib/patients/types";
 import { createClient } from "@/lib/supabase/server";
@@ -38,6 +39,9 @@ export default async function PatientsPage() {
   const { branchId: operationsBranchId, switcherBranches } =
     await resolveBranchOperationsScope();
 
+  const userType = await getSessionUserType();
+  const isSuperAdmin = userType === "super_admin";
+
   let patientQuery = supabase
     .from("patient_directory")
     .select("*")
@@ -48,6 +52,26 @@ export default async function PatientsPage() {
   }
 
   const { data: rows, error } = await patientQuery;
+
+  let deletedData: PatientDirectoryRow[] = [];
+  if (isSuperAdmin) {
+    let deletedQuery = supabase
+      .from("patient_directory_deleted")
+      .select("*")
+      .order("deleted_at", { ascending: false });
+
+    if (operationsBranchId) {
+      deletedQuery = deletedQuery.contains("branch_ids", [operationsBranchId]);
+    }
+
+    const { data: deletedRows, error: deletedError } = await deletedQuery;
+    if (deletedError) {
+      console.error(deletedError);
+    }
+    deletedData = (deletedRows ?? []).map((r) =>
+      normalizePatientRow(r as Record<string, unknown>),
+    );
+  }
 
   if (error) {
     console.error(error);
@@ -63,9 +87,11 @@ export default async function PatientsPage() {
     <div className="flex flex-1 flex-col py-4">
       <DataTable
         data={data}
+        deletedData={deletedData}
         variant="branch"
         autoAssignBranchId={operationsBranchId}
         autoAssignBranchLabel={currentBranch?.long_name ?? null}
+        isSuperAdmin={isSuperAdmin}
       />
     </div>
   );

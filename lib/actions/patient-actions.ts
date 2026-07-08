@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getBranchesForSwitcher } from "@/lib/actions/branch-actions";
 import { createClient } from "@/lib/supabase/server";
+import { PATIENT_FILES_BUCKET } from "@/lib/patient-files/types";
 
 export type PatientMutationResult =
   | { ok: true }
@@ -15,14 +16,53 @@ const isoDate = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a valid date");
 
-const patientFieldsSchema = z.object({
-  first_name: z.string().trim().min(1, "First name is required"),
-  middle_name: z.string().trim().nullable(),
-  last_name: z.string().trim().min(1, "Last name is required"),
-  contact_number: z.string().trim().nullable(),
-  date_of_birth: z.union([isoDate, z.literal("")]).nullable(),
-  address: z.string().trim().nullable(),
-});
+const patientFieldsSchema = z
+  .object({
+    first_name: z.string().trim().min(1, "First name is required"),
+    middle_name: z.string().trim().nullable(),
+    last_name: z.string().trim().min(1, "Last name is required"),
+    contact_number: z.string().trim().nullable(),
+    date_of_birth: z.union([isoDate, z.literal("")]).nullable(),
+    address: z.string().trim().nullable(),
+    is_minor: z.boolean(),
+    guardian_name: z.string().trim().nullable(),
+    guardian_mobile: z.string().trim().nullable(),
+    guardian_email: z.string().trim().nullable(),
+    guardian_relationship: z.string().trim().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.is_minor) return;
+
+    if (!data.guardian_name?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Guardian name is required for minors",
+        path: ["guardian_name"],
+      });
+    }
+    if (!data.guardian_mobile?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Guardian mobile number is required for minors",
+        path: ["guardian_mobile"],
+      });
+    }
+    if (!data.guardian_relationship?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Guardian relationship is required for minors",
+        path: ["guardian_relationship"],
+      });
+    }
+    const email = data.guardian_email?.trim();
+    if (email && !z.string().email().safeParse(email).success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter a valid guardian email address",
+        path: ["guardian_email"],
+      });
+    }
+  });
 
 const updatePatientSchema = patientFieldsSchema.extend({
   patientId: z.string().uuid(),
@@ -46,6 +86,11 @@ function normalizePatientFields(
   contact_number: string | null;
   date_of_birth: string | null;
   address: string | null;
+  is_minor: boolean;
+  guardian_name: string | null;
+  guardian_mobile: string | null;
+  guardian_email: string | null;
+  guardian_relationship: string | null;
 } {
   const middle =
     data.middle_name == null || data.middle_name === ""
@@ -61,6 +106,28 @@ function normalizePatientFields(
       : data.date_of_birth;
   const addr =
     data.address == null || data.address === "" ? null : data.address;
+
+  if (!data.is_minor) {
+    return {
+      first_name: data.first_name,
+      middle_name: middle,
+      last_name: data.last_name,
+      contact_number: contact,
+      date_of_birth: dob,
+      address: addr,
+      is_minor: false,
+      guardian_name: null,
+      guardian_mobile: null,
+      guardian_email: null,
+      guardian_relationship: null,
+    };
+  }
+
+  const guardianEmail =
+    data.guardian_email == null || data.guardian_email === ""
+      ? null
+      : data.guardian_email;
+
   return {
     first_name: data.first_name,
     middle_name: middle,
@@ -68,7 +135,60 @@ function normalizePatientFields(
     contact_number: contact,
     date_of_birth: dob,
     address: addr,
+    is_minor: true,
+    guardian_name: data.guardian_name!.trim(),
+    guardian_mobile: data.guardian_mobile!.trim(),
+    guardian_email: guardianEmail,
+    guardian_relationship: data.guardian_relationship!.trim(),
   };
+}
+
+const patientIdSchema = z.object({
+  patientId: z.string().uuid(),
+});
+
+async function assertSuperAdmin(): Promise<PatientMutationResult | { ok: true }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, message: "Not signed in" };
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("user_type")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profile?.user_type !== "super_admin") {
+    return { ok: false, message: "Forbidden" };
+  }
+  return { ok: true };
+}
+
+async function requireStaffUser(): Promise<
+  { ok: false; message: string } | { ok: true; userId: string }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, message: "Not authenticated." };
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("user_type")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (
+    profile?.user_type !== "super_admin" &&
+    profile?.user_type !== "employee"
+  ) {
+    return { ok: false, message: "Not authorized." };
+  }
+
+  return { ok: true, userId: user.id };
 }
 
 async function canManagePatientBranches(
@@ -252,6 +372,11 @@ export async function updatePatientRecord(
       contact_number: fields.contact_number,
       date_of_birth: fields.date_of_birth,
       address: fields.address,
+      is_minor: fields.is_minor,
+      guardian_name: fields.guardian_name,
+      guardian_mobile: fields.guardian_mobile,
+      guardian_email: fields.guardian_email,
+      guardian_relationship: fields.guardian_relationship,
     })
     .eq("id", parsed.data.patientId);
 
@@ -318,6 +443,175 @@ export async function activatePatientUser(
   }
   if (!data?.length) {
     return { ok: false, message: "No matching patient account found" };
+  }
+
+  revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
+  return { ok: true };
+}
+
+export async function softDeletePatientRecord(
+  input: unknown,
+): Promise<PatientMutationResult> {
+  const parsed = patientIdSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: "Invalid patient id" };
+  }
+
+  const auth = await requireStaffUser();
+  if (!auth.ok) return auth;
+
+  const supabase = await createClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("patients")
+    .select("id, deleted_at")
+    .eq("id", parsed.data.patientId)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error(fetchError);
+    return { ok: false, message: fetchError.message };
+  }
+  if (!existing) {
+    return { ok: false, message: "Patient not found" };
+  }
+  if (existing.deleted_at) {
+    return { ok: false, message: "Patient is already deleted" };
+  }
+
+  const { error } = await supabase
+    .from("patients")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: auth.userId,
+    })
+    .eq("id", parsed.data.patientId);
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
+  revalidatePath(`/patients/${parsed.data.patientId}`);
+  return { ok: true };
+}
+
+export async function restorePatientRecord(
+  input: unknown,
+): Promise<PatientMutationResult> {
+  const parsed = patientIdSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: "Invalid patient id" };
+  }
+
+  const authCheck = await assertSuperAdmin();
+  if (!authCheck.ok) return authCheck;
+
+  const supabase = await createClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("patients")
+    .select("id, deleted_at")
+    .eq("id", parsed.data.patientId)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error(fetchError);
+    return { ok: false, message: fetchError.message };
+  }
+  if (!existing?.deleted_at) {
+    return { ok: false, message: "Patient is not deleted" };
+  }
+
+  const { error } = await supabase
+    .from("patients")
+    .update({
+      deleted_at: null,
+      deleted_by: null,
+    })
+    .eq("id", parsed.data.patientId);
+
+  if (error) {
+    console.error(error);
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/admin/users/patients");
+  revalidatePath("/patients");
+  return { ok: true };
+}
+
+export async function permanentlyDeletePatientRecord(
+  input: unknown,
+): Promise<PatientMutationResult> {
+  const parsed = patientIdSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: "Invalid patient id" };
+  }
+
+  const authCheck = await assertSuperAdmin();
+  if (!authCheck.ok) return authCheck;
+
+  const supabase = await createClient();
+  const patientId = parsed.data.patientId;
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("patients")
+    .select("id")
+    .eq("id", patientId)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error(fetchError);
+    return { ok: false, message: fetchError.message };
+  }
+  if (!existing) {
+    return { ok: false, message: "Patient not found" };
+  }
+
+  const { data: fileRows, error: filesError } = await supabase
+    .from("patient_files")
+    .select("storage_path")
+    .eq("patient_id", patientId);
+
+  if (filesError) {
+    console.error(filesError);
+    return { ok: false, message: filesError.message };
+  }
+
+  const { error: appointmentError } = await supabase
+    .from("appointments")
+    .update({ patient_id: null })
+    .eq("patient_id", patientId);
+
+  if (appointmentError) {
+    console.error(appointmentError);
+    return { ok: false, message: appointmentError.message };
+  }
+
+  const { error: deleteError } = await supabase
+    .from("patients")
+    .delete()
+    .eq("id", patientId);
+
+  if (deleteError) {
+    console.error(deleteError);
+    return { ok: false, message: deleteError.message };
+  }
+
+  const storagePaths = (fileRows ?? [])
+    .map((row) => row.storage_path)
+    .filter(Boolean);
+
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await supabase.storage
+      .from(PATIENT_FILES_BUCKET)
+      .remove(storagePaths);
+
+    if (storageError) {
+      console.error(storageError);
+    }
   }
 
   revalidatePath("/admin/users/patients");

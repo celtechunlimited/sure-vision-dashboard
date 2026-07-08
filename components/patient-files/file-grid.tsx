@@ -1,17 +1,38 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   ArrowDownIcon,
   ArrowUpDownIcon,
   ArrowUpIcon,
   FileIcon,
   FolderIcon,
+  GripVerticalIcon,
   LayoutGridIcon,
   ListIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { FileRowActions } from "@/components/patient-files/file-row-actions";
+import { reorderPatientItems } from "@/lib/actions/patient-file-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -35,15 +56,17 @@ import {
   getFilesInFolder,
 } from "@/lib/patient-files/utils";
 
-type SortKey = "name" | "type" | "size" | "updated";
+type SortKey = "name" | "type" | "size" | "updated" | "custom";
 type SortDir = "asc" | "desc";
 type ViewMode = "list" | "grid";
 
 type FileGridProps = {
+  patientId: string;
   folders: PatientFolderRow[];
   files: PatientFileRow[];
   currentFolderId: string | null;
   trash?: boolean;
+  isSuperAdmin?: boolean;
   onOpenFolder: (folderId: string) => void;
   onRenameFolder: (folder: PatientFolderRow) => void;
   onMoveFolder: (folder: PatientFolderRow) => void;
@@ -52,6 +75,14 @@ type FileGridProps = {
   onReplaceFile: (file: PatientFileRow) => void;
   onPreviewFile: (file: PatientFileRow) => void;
 };
+
+function itemSortOrder(item: PatientFileExplorerItem): number | null {
+  return item.kind === "folder" ? item.folder.sort_order : item.file.sort_order;
+}
+
+function itemId(item: PatientFileExplorerItem): string {
+  return item.kind === "folder" ? `folder:${item.folder.id}` : `file:${item.file.id}`;
+}
 
 function sortItems(
   items: PatientFileExplorerItem[],
@@ -63,6 +94,17 @@ function sortItems(
     const aFolder = a.kind === "folder";
     const bFolder = b.kind === "folder";
     if (aFolder !== bFolder) return aFolder ? -1 : 1;
+
+    if (sortKey === "custom") {
+      const aOrder = itemSortOrder(a);
+      const bOrder = itemSortOrder(b);
+      if (aOrder != null && bOrder != null) return (aOrder - bOrder) * dir;
+      if (aOrder != null) return -1;
+      if (bOrder != null) return 1;
+      const aName = a.kind === "folder" ? a.folder.name : a.file.file_name;
+      const bName = b.kind === "folder" ? b.folder.name : b.file.file_name;
+      return aName.localeCompare(bName);
+    }
 
     if (sortKey === "name") {
       const aName = a.kind === "folder" ? a.folder.name : a.file.file_name;
@@ -118,11 +160,56 @@ function SortButton({
   );
 }
 
+function SortableRow({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  return (
+    <TableRow ref={setNodeRef} style={style}>
+      {!disabled ? (
+        <TableCell className="w-8">
+          <button
+            type="button"
+            className="cursor-grab text-muted-foreground active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVerticalIcon className="size-4" />
+          </button>
+        </TableCell>
+      ) : null}
+      {children}
+    </TableRow>
+  );
+}
+
 export function FileGrid({
+  patientId,
   folders,
   files,
   currentFolderId,
   trash = false,
+  isSuperAdmin = false,
   onOpenFolder,
   onRenameFolder,
   onMoveFolder,
@@ -131,10 +218,19 @@ export function FileGrid({
   onReplaceFile,
   onPreviewFile,
 }: FileGridProps) {
+  const router = useRouter();
   const [search, setSearch] = React.useState("");
   const [sortKey, setSortKey] = React.useState<SortKey>("name");
   const [sortDir, setSortDir] = React.useState<SortDir>("asc");
   const [viewMode, setViewMode] = React.useState<ViewMode>("list");
+  const [reorderPending, startReorder] = React.useTransition();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   const visibleFolders = getChildFolders(folders, currentFolderId, { trash });
   const visibleFiles = getFilesInFolder(files, folders, currentFolderId, {
@@ -156,13 +252,146 @@ export function FileGrid({
     return sortItems(filtered, sortKey, sortDir);
   }, [visibleFolders, visibleFiles, search, sortKey, sortDir]);
 
-  function toggleSort(key: SortKey) {
+  const folderItems = React.useMemo(
+    () => items.filter((item) => item.kind === "folder"),
+    [items],
+  );
+  const fileItems = React.useMemo(
+    () => items.filter((item) => item.kind === "file"),
+    [items],
+  );
+
+  const customSortEnabled =
+    sortKey === "custom" && viewMode === "list" && !trash && !search.trim();
+
+  function toggleSort(key: Exclude<SortKey, "custom">) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
       return;
     }
     setSortKey(key);
     setSortDir("asc");
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeKey = String(active.id);
+    const overKey = String(over.id);
+    const activeIsFolder = activeKey.startsWith("folder:");
+    if (activeIsFolder !== overKey.startsWith("folder:")) return;
+
+    if (activeIsFolder) {
+      const group = folderItems as Array<
+        PatientFileExplorerItem & { kind: "folder" }
+      >;
+      const oldIndex = group.findIndex((item) => itemId(item) === active.id);
+      const newIndex = group.findIndex((item) => itemId(item) === over.id);
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reordered = arrayMove(group, oldIndex, newIndex);
+      startReorder(async () => {
+        const result = await reorderPatientItems({
+          patientId,
+          folderId: currentFolderId,
+          items: reordered.map((item) => ({
+            id: item.folder.id,
+            kind: "folder" as const,
+          })),
+        });
+        if (!result.ok) {
+          toast.error(result.message);
+          return;
+        }
+        router.refresh();
+      });
+      return;
+    }
+
+    const group = fileItems as Array<PatientFileExplorerItem & { kind: "file" }>;
+    const oldIndex = group.findIndex((item) => itemId(item) === active.id);
+    const newIndex = group.findIndex((item) => itemId(item) === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const reordered = arrayMove(group, oldIndex, newIndex);
+    startReorder(async () => {
+      const result = await reorderPatientItems({
+        patientId,
+        folderId: currentFolderId,
+        items: reordered.map((item) => ({
+          id: item.file.id,
+          kind: "file" as const,
+        })),
+      });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function renderFolderRow(item: PatientFileExplorerItem & { kind: "folder" }) {
+    return (
+      <>
+        <TableCell>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 text-left"
+            onClick={() => !trash && onOpenFolder(item.folder.id)}
+          >
+            <FolderIcon className="size-4 text-amber-500" />
+            {item.folder.name}
+          </button>
+        </TableCell>
+        <TableCell>Folder</TableCell>
+        <TableCell>—</TableCell>
+        <TableCell>{formatDateTime(item.folder.updated_at)}</TableCell>
+        <TableCell>
+          <FileRowActions
+            targetType="folder"
+            folder={item.folder}
+            archive={trash}
+            isSuperAdmin={isSuperAdmin}
+            onRename={() => onRenameFolder(item.folder)}
+            onMove={() => onMoveFolder(item.folder)}
+          />
+        </TableCell>
+      </>
+    );
+  }
+
+  function renderFileRow(item: PatientFileExplorerItem & { kind: "file" }) {
+    return (
+      <>
+        <TableCell>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 text-left"
+            onClick={() => !trash && onPreviewFile(item.file)}
+          >
+            <FileIcon className="size-4 text-blue-500" />
+            {item.file.file_name}
+          </button>
+        </TableCell>
+        <TableCell>{item.file.mime_type}</TableCell>
+        <TableCell>{formatFileSize(item.file.file_size)}</TableCell>
+        <TableCell>{formatDateTime(item.file.updated_at)}</TableCell>
+        <TableCell>
+          <FileRowActions
+            targetType="file"
+            file={item.file}
+            archive={trash}
+            isSuperAdmin={isSuperAdmin}
+            onRename={() => onRenameFile(item.file)}
+            onMove={() => onMoveFile(item.file)}
+            onReplace={() => onReplaceFile(item.file)}
+            onPreview={() => onPreviewFile(item.file)}
+          />
+        </TableCell>
+      </>
+    );
   }
 
   return (
@@ -174,134 +403,152 @@ export function FileGrid({
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <ToggleGroup
-          type="single"
-          value={viewMode}
-          onValueChange={(value) => {
-            if (value) setViewMode(value as ViewMode);
-          }}
-        >
-          <ToggleGroupItem value="list" aria-label="List view">
-            <ListIcon className="size-4" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="grid" aria-label="Grid view">
-            <LayoutGridIcon className="size-4" />
-          </ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex items-center gap-2">
+          {!trash ? (
+            <Button
+              type="button"
+              variant={sortKey === "custom" ? "default" : "outline"}
+              size="sm"
+              disabled={reorderPending}
+              onClick={() => {
+                setSortKey("custom");
+                setSortDir("asc");
+              }}
+            >
+              Custom order
+            </Button>
+          ) : null}
+          <ToggleGroup
+            type="single"
+            value={viewMode}
+            onValueChange={(value) => {
+              if (value) setViewMode(value as ViewMode);
+            }}
+          >
+            <ToggleGroupItem value="list" aria-label="List view">
+              <ListIcon className="size-4" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="grid" aria-label="Grid view">
+              <LayoutGridIcon className="size-4" />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </div>
 
       {items.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {trash ? "Trash is empty." : "No files or folders here yet."}
+          {trash ? "Archive is empty." : "No files or folders here yet."}
         </div>
       ) : viewMode === "list" ? (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>
-                  <SortButton
-                    label="Name"
-                    active={sortKey === "name"}
-                    dir={sortDir}
-                    onClick={() => toggleSort("name")}
-                  />
-                </TableHead>
-                <TableHead>
-                  <SortButton
-                    label="Type"
-                    active={sortKey === "type"}
-                    dir={sortDir}
-                    onClick={() => toggleSort("type")}
-                  />
-                </TableHead>
-                <TableHead>
-                  <SortButton
-                    label="Size"
-                    active={sortKey === "size"}
-                    dir={sortDir}
-                    onClick={() => toggleSort("size")}
-                  />
-                </TableHead>
-                <TableHead>
-                  <SortButton
-                    label="Modified"
-                    active={sortKey === "updated"}
-                    dir={sortDir}
-                    onClick={() => toggleSort("updated")}
-                  />
-                </TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((item) =>
-                item.kind === "folder" ? (
-                  <TableRow
-                    key={`folder-${item.folder.id}`}
-                    className="cursor-pointer"
-                    onDoubleClick={() => !trash && onOpenFolder(item.folder.id)}
-                    onContextMenu={(e) => e.preventDefault()}
-                  >
-                    <TableCell>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 text-left"
-                        onClick={() => !trash && onOpenFolder(item.folder.id)}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {customSortEnabled ? <TableHead className="w-8" /> : null}
+                  <TableHead>
+                    <SortButton
+                      label="Name"
+                      active={sortKey === "name"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("name")}
+                    />
+                  </TableHead>
+                  <TableHead>
+                    <SortButton
+                      label="Type"
+                      active={sortKey === "type"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("type")}
+                    />
+                  </TableHead>
+                  <TableHead>
+                    <SortButton
+                      label="Size"
+                      active={sortKey === "size"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("size")}
+                    />
+                  </TableHead>
+                  <TableHead>
+                    <SortButton
+                      label="Modified"
+                      active={sortKey === "updated"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("updated")}
+                    />
+                  </TableHead>
+                  <TableHead className="w-12" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {customSortEnabled ? (
+                  <>
+                    {folderItems.length > 0 ? (
+                      <SortableContext
+                        items={folderItems.map(itemId)}
+                        strategy={verticalListSortingStrategy}
                       >
-                        <FolderIcon className="size-4 text-amber-500" />
-                        {item.folder.name}
-                      </button>
-                    </TableCell>
-                    <TableCell>Folder</TableCell>
-                    <TableCell>—</TableCell>
-                    <TableCell>{formatDateTime(item.folder.updated_at)}</TableCell>
-                    <TableCell>
-                      <FileRowActions
-                        targetType="folder"
-                        folder={item.folder}
-                        trash={trash}
-                        onRename={() => onRenameFolder(item.folder)}
-                        onMove={() => onMoveFolder(item.folder)}
-                      />
-                    </TableCell>
-                  </TableRow>
+                        {folderItems.map((item) => (
+                          <SortableRow
+                            key={itemId(item)}
+                            id={itemId(item)}
+                            disabled={reorderPending}
+                          >
+                            {renderFolderRow(item)}
+                          </SortableRow>
+                        ))}
+                      </SortableContext>
+                    ) : null}
+                    {fileItems.length > 0 ? (
+                      <SortableContext
+                        items={fileItems.map(itemId)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {fileItems.map((item) => (
+                          <SortableRow
+                            key={itemId(item)}
+                            id={itemId(item)}
+                            disabled={reorderPending}
+                          >
+                            {renderFileRow(item)}
+                          </SortableRow>
+                        ))}
+                      </SortableContext>
+                    ) : null}
+                  </>
                 ) : (
-                  <TableRow
-                    key={`file-${item.file.id}`}
-                    onDoubleClick={() => !trash && onPreviewFile(item.file)}
-                    onContextMenu={(e) => e.preventDefault()}
-                  >
-                    <TableCell>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 text-left"
-                        onClick={() => !trash && onPreviewFile(item.file)}
+                  items.map((item) =>
+                    item.kind === "folder" ? (
+                      <TableRow
+                        key={`folder-${item.folder.id}`}
+                        className="cursor-pointer"
+                        onDoubleClick={() =>
+                          !trash && onOpenFolder(item.folder.id)
+                        }
+                        onContextMenu={(e) => e.preventDefault()}
                       >
-                        <FileIcon className="size-4 text-blue-500" />
-                        {item.file.file_name}
-                      </button>
-                    </TableCell>
-                    <TableCell>{item.file.mime_type}</TableCell>
-                    <TableCell>{formatFileSize(item.file.file_size)}</TableCell>
-                    <TableCell>{formatDateTime(item.file.updated_at)}</TableCell>
-                    <TableCell>
-                      <FileRowActions
-                        targetType="file"
-                        file={item.file}
-                        trash={trash}
-                        onRename={() => onRenameFile(item.file)}
-                        onMove={() => onMoveFile(item.file)}
-                        onReplace={() => onReplaceFile(item.file)}
-                        onPreview={() => onPreviewFile(item.file)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ),
-              )}
-            </TableBody>
-          </Table>
-        </div>
+                        {renderFolderRow(item)}
+                      </TableRow>
+                    ) : (
+                      <TableRow
+                        key={`file-${item.file.id}`}
+                        onDoubleClick={() => !trash && onPreviewFile(item.file)}
+                        onContextMenu={(e) => e.preventDefault()}
+                      >
+                        {renderFileRow(item)}
+                      </TableRow>
+                    ),
+                  )
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </DndContext>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {items.map((item) =>
@@ -325,7 +572,8 @@ export function FileGrid({
                   <FileRowActions
                     targetType="folder"
                     folder={item.folder}
-                    trash={trash}
+                    archive={trash}
+                    isSuperAdmin={isSuperAdmin}
                     onRename={() => onRenameFolder(item.folder)}
                     onMove={() => onMoveFolder(item.folder)}
                   />
@@ -353,7 +601,8 @@ export function FileGrid({
                   <FileRowActions
                     targetType="file"
                     file={item.file}
-                    trash={trash}
+                    archive={trash}
+                    isSuperAdmin={isSuperAdmin}
                     onRename={() => onRenameFile(item.file)}
                     onMove={() => onMoveFile(item.file)}
                     onReplace={() => onReplaceFile(item.file)}

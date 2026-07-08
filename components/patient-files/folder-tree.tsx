@@ -129,7 +129,7 @@ export function FolderTree({
         onClick={() => onSelect(null)}
       >
         <FolderIcon className="size-4 text-muted-foreground" />
-        {trash ? "Trash root" : "All files"}
+        {trash ? "Archive root" : "All files"}
       </button>
       {roots.map((folder) => (
         <FolderTreeNode

@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import {
+  ArchiveIcon,
   FolderPlusIcon,
   HistoryIcon,
-  Trash2Icon,
 } from "lucide-react";
 
 import { ActivityDrawer } from "@/components/patient-files/activity-drawer";
@@ -31,6 +31,7 @@ type PatientFilesWorkspaceProps = {
   files: PatientFileRow[];
   activities: PatientFileActivityRow[];
   performerNames: Record<string, string>;
+  isSuperAdmin?: boolean;
 };
 
 type RenameTarget =
@@ -47,11 +48,12 @@ export function PatientFilesWorkspace({
   files,
   activities,
   performerNames,
+  isSuperAdmin = false,
 }: PatientFilesWorkspaceProps) {
   const [currentFolderId, setCurrentFolderId] = React.useState<string | null>(
     null,
   );
-  const [showTrash, setShowTrash] = React.useState(false);
+  const [showArchive, setShowArchive] = React.useState(false);
   const [newFolderOpen, setNewFolderOpen] = React.useState(false);
   const [activityOpen, setActivityOpen] = React.useState(false);
   const [renameTarget, setRenameTarget] = React.useState<RenameTarget | null>(
@@ -72,14 +74,14 @@ export function PatientFilesWorkspace({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <PatientFolderBreadcrumbs
           folders={folders}
-          currentFolderId={showTrash ? null : currentFolderId}
+          currentFolderId={showArchive ? null : currentFolderId}
           onNavigate={(folderId) => {
-            setShowTrash(false);
+            setShowArchive(false);
             setCurrentFolderId(folderId);
           }}
         />
         <div className="flex flex-wrap items-center gap-2">
-          {!showTrash ? (
+          {!showArchive ? (
             <Button
               type="button"
               variant="outline"
@@ -92,12 +94,12 @@ export function PatientFilesWorkspace({
           ) : null}
           <Button
             type="button"
-            variant={showTrash ? "default" : "outline"}
+            variant={showArchive ? "default" : "outline"}
             size="sm"
-            onClick={() => setShowTrash((v) => !v)}
+            onClick={() => setShowArchive((v) => !v)}
           >
-            <Trash2Icon className="size-4" />
-            {showTrash ? "Back to files" : "Trash"}
+            <ArchiveIcon className="size-4" />
+            {showArchive ? "Back to files" : "Archive"}
           </Button>
           <Button
             type="button"
@@ -120,23 +122,25 @@ export function PatientFilesWorkspace({
             folders={folders}
             currentFolderId={currentFolderId}
             onSelect={(folderId) => {
-              setShowTrash(false);
+              setShowArchive(false);
               setCurrentFolderId(folderId);
             }}
-            trash={showTrash}
+            trash={showArchive}
           />
         </aside>
 
         <div className="min-w-0 space-y-4">
-          {!showTrash ? (
+          {!showArchive ? (
             <UploadDropzone patientId={patientId} folderId={currentFolderId} />
           ) : null}
           <Separator />
           <FileGrid
+            patientId={patientId}
             folders={folders}
             files={files}
             currentFolderId={currentFolderId}
-            trash={showTrash}
+            trash={showArchive}
+            isSuperAdmin={isSuperAdmin}
             onOpenFolder={setCurrentFolderId}
             onRenameFolder={(folder) =>
               setRenameTarget({

@@ -26,19 +26,31 @@ function normalizePatientRow(raw: Record<string, unknown>): PatientDirectoryRow 
 
 export default async function AdminUsersPatientsPage() {
   const supabase = await createClient();
-  const [{ data: rows, error }, branchRows] = await Promise.all([
-    supabase
-      .from("patient_directory")
-      .select("*")
-      .order("patient_created_at", { ascending: false }),
-    listBranchesForAdmin(),
-  ]);
+  const [{ data: rows, error }, { data: deletedRows, error: deletedError }, branchRows] =
+    await Promise.all([
+      supabase
+        .from("patient_directory")
+        .select("*")
+        .order("patient_created_at", { ascending: false }),
+      supabase
+        .from("patient_directory_deleted")
+        .select("*")
+        .order("deleted_at", { ascending: false }),
+      listBranchesForAdmin(),
+    ]);
 
   if (error) {
     console.error(error);
   }
+  if (deletedError) {
+    console.error(deletedError);
+  }
 
   const data = (rows ?? []).map((r) =>
+    normalizePatientRow(r as Record<string, unknown>),
+  );
+
+  const deletedData = (deletedRows ?? []).map((r) =>
     normalizePatientRow(r as Record<string, unknown>),
   );
 
@@ -50,7 +62,12 @@ export default async function AdminUsersPatientsPage() {
 
   return (
     <div className="flex flex-1 flex-col py-4">
-      <DataTable data={data} branches={branches} />
+      <DataTable
+        data={data}
+        deletedData={deletedData}
+        branches={branches}
+        isSuperAdmin
+      />
     </div>
   );
 }
