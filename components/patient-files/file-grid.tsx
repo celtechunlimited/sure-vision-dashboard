@@ -7,6 +7,7 @@ import {
   DndContext,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -162,21 +163,20 @@ function SortButton({
 
 function SortableRow({
   id,
-  disabled,
   children,
 }: {
   id: string;
-  disabled?: boolean;
   children: React.ReactNode;
 }) {
   const {
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
-  } = useSortable({ id, disabled });
+  } = useSortable({ id });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -185,19 +185,24 @@ function SortableRow({
   };
 
   return (
-    <TableRow ref={setNodeRef} style={style}>
-      {!disabled ? (
-        <TableCell className="w-8">
-          <button
-            type="button"
-            className="cursor-grab text-muted-foreground active:cursor-grabbing"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVerticalIcon className="size-4" />
-          </button>
-        </TableCell>
-      ) : null}
+    <TableRow
+      ref={setNodeRef}
+      style={style}
+      className={isDragging ? "select-none touch-none" : undefined}
+    >
+      <TableCell className="w-8">
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="cursor-grab touch-none select-none text-muted-foreground active:cursor-grabbing [-webkit-touch-callout:none]"
+          style={{ touchAction: "none" }}
+          aria-label="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVerticalIcon className="size-4 pointer-events-none" />
+        </button>
+      </TableCell>
       {children}
     </TableRow>
   );
@@ -223,14 +228,45 @@ export function FileGrid({
   const [sortKey, setSortKey] = React.useState<SortKey>("name");
   const [sortDir, setSortDir] = React.useState<SortDir>("asc");
   const [viewMode, setViewMode] = React.useState<ViewMode>("list");
-  const [reorderPending, startReorder] = React.useTransition();
+  const [localCustomItems, setLocalCustomItems] = React.useState<
+    PatientFileExplorerItem[] | null
+  >(null);
+  const persistTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const persistQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+  const pendingFolderOrderRef = React.useRef<Array<{
+    id: string;
+    kind: "folder";
+  }> | null>(null);
+  const pendingFileOrderRef = React.useRef<Array<{
+    id: string;
+    kind: "file";
+  }> | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 6 },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+
+  React.useEffect(() => {
+    setLocalCustomItems(null);
+  }, [currentFolderId, trash, search, sortKey, viewMode]);
+
+  React.useEffect(() => {
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
+    };
+  }, []);
 
   const visibleFolders = getChildFolders(folders, currentFolderId, { trash });
   const visibleFiles = getFilesInFolder(files, folders, currentFolderId, {
@@ -252,17 +288,99 @@ export function FileGrid({
     return sortItems(filtered, sortKey, sortDir);
   }, [visibleFolders, visibleFiles, search, sortKey, sortDir]);
 
-  const folderItems = React.useMemo(
-    () => items.filter((item) => item.kind === "folder"),
-    [items],
-  );
-  const fileItems = React.useMemo(
-    () => items.filter((item) => item.kind === "file"),
-    [items],
-  );
-
   const customSortEnabled =
     sortKey === "custom" && viewMode === "list" && !trash && !search.trim();
+
+  const displayItems =
+    customSortEnabled && localCustomItems ? localCustomItems : items;
+
+  const folderItems = React.useMemo(
+    () => displayItems.filter((item) => item.kind === "folder"),
+    [displayItems],
+  );
+  const fileItems = React.useMemo(
+    () => displayItems.filter((item) => item.kind === "file"),
+    [displayItems],
+  );
+
+  function schedulePersist(
+    kind: "folder" | "file",
+    reordered: PatientFileExplorerItem[],
+  ) {
+    const payload = reordered.map((item) => ({
+      id: item.kind === "folder" ? item.folder.id : item.file.id,
+      kind: item.kind,
+    }));
+
+    if (kind === "folder") {
+      pendingFolderOrderRef.current = payload as Array<{
+        id: string;
+        kind: "folder";
+      }>;
+    } else {
+      pendingFileOrderRef.current = payload as Array<{
+        id: string;
+        kind: "file";
+      }>;
+    }
+
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+
+    persistTimerRef.current = setTimeout(() => {
+      const folderItemsToSave = pendingFolderOrderRef.current;
+      const fileItemsToSave = pendingFileOrderRef.current;
+      pendingFolderOrderRef.current = null;
+      pendingFileOrderRef.current = null;
+
+      persistQueueRef.current = persistQueueRef.current
+        .then(async () => {
+          if (folderItemsToSave) {
+            const result = await reorderPatientItems({
+              patientId,
+              folderId: currentFolderId,
+              items: folderItemsToSave,
+            });
+            if (!result.ok) {
+              throw new Error(result.message);
+            }
+          }
+
+          if (fileItemsToSave) {
+            const result = await reorderPatientItems({
+              patientId,
+              folderId: currentFolderId,
+              items: fileItemsToSave,
+            });
+            if (!result.ok) {
+              throw new Error(result.message);
+            }
+          }
+        })
+        .catch((error: unknown) => {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not save custom order.",
+          );
+          setLocalCustomItems(null);
+          router.refresh();
+        });
+    }, 400);
+  }
+
+  function applyOptimisticReorder(
+    kind: "folder" | "file",
+    reordered: PatientFileExplorerItem[],
+  ) {
+    const nextItems =
+      kind === "folder"
+        ? [...reordered, ...fileItems]
+        : [...folderItems, ...reordered];
+    setLocalCustomItems(nextItems);
+    schedulePersist(kind, reordered);
+  }
 
   function toggleSort(key: Exclude<SortKey, "custom">) {
     if (sortKey === key) {
@@ -291,21 +409,7 @@ export function FileGrid({
       if (oldIndex < 0 || newIndex < 0) return;
 
       const reordered = arrayMove(group, oldIndex, newIndex);
-      startReorder(async () => {
-        const result = await reorderPatientItems({
-          patientId,
-          folderId: currentFolderId,
-          items: reordered.map((item) => ({
-            id: item.folder.id,
-            kind: "folder" as const,
-          })),
-        });
-        if (!result.ok) {
-          toast.error(result.message);
-          return;
-        }
-        router.refresh();
-      });
+      applyOptimisticReorder("folder", reordered);
       return;
     }
 
@@ -315,21 +419,7 @@ export function FileGrid({
     if (oldIndex < 0 || newIndex < 0) return;
 
     const reordered = arrayMove(group, oldIndex, newIndex);
-    startReorder(async () => {
-      const result = await reorderPatientItems({
-        patientId,
-        folderId: currentFolderId,
-        items: reordered.map((item) => ({
-          id: item.file.id,
-          kind: "file" as const,
-        })),
-      });
-      if (!result.ok) {
-        toast.error(result.message);
-        return;
-      }
-      router.refresh();
-    });
+    applyOptimisticReorder("file", reordered);
   }
 
   function renderFolderRow(item: PatientFileExplorerItem & { kind: "folder" }) {
@@ -409,7 +499,6 @@ export function FileGrid({
               type="button"
               variant={sortKey === "custom" ? "default" : "outline"}
               size="sm"
-              disabled={reorderPending}
               onClick={() => {
                 setSortKey("custom");
                 setSortDir("asc");
@@ -494,11 +583,7 @@ export function FileGrid({
                         strategy={verticalListSortingStrategy}
                       >
                         {folderItems.map((item) => (
-                          <SortableRow
-                            key={itemId(item)}
-                            id={itemId(item)}
-                            disabled={reorderPending}
-                          >
+                          <SortableRow key={itemId(item)} id={itemId(item)}>
                             {renderFolderRow(item)}
                           </SortableRow>
                         ))}
@@ -510,11 +595,7 @@ export function FileGrid({
                         strategy={verticalListSortingStrategy}
                       >
                         {fileItems.map((item) => (
-                          <SortableRow
-                            key={itemId(item)}
-                            id={itemId(item)}
-                            disabled={reorderPending}
-                          >
+                          <SortableRow key={itemId(item)} id={itemId(item)}>
                             {renderFileRow(item)}
                           </SortableRow>
                         ))}
